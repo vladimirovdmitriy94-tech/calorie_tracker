@@ -24,6 +24,7 @@
   --red: oklch(0.56 0.17 25);
   --amber: oklch(0.66 0.14 72);
   --green: oklch(0.52 0.14 152);
+  --avatar-color: #e65bac;
 }
 
 body {
@@ -119,7 +120,7 @@ body {
 .hdr-right { display: flex; gap: 4px; }
 .chat-avatar {
   width: 36px; height: 36px; border-radius: 50%;
-  background: var(--accent);
+  background: var(--avatar-color);
   display: flex; align-items: center; justify-content: center;
   font-size: 18px; flex-shrink: 0;
 }
@@ -157,7 +158,7 @@ body {
 .msg-row.user { flex-direction: row-reverse; }
 .msg-avatar {
   width: 28px; height: 28px; border-radius: 50%;
-  background: var(--accent);
+  background: var(--avatar-color);
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; margin-bottom: 2px; font-size: 14px;
 }
@@ -332,6 +333,37 @@ body {
   background: var(--accent); color: #fff; font-size: 13px;
   font-weight: 600; cursor: pointer; font-family: inherit;
 }
+
+/* ── quick actions bar ── */
+#quick-actions {
+  display: flex; gap: 8px;
+  padding: 6px 12px 4px;
+  overflow-x: auto; scrollbar-width: none;
+  flex-shrink: 0;
+}
+#quick-actions::-webkit-scrollbar { display: none; }
+.qa-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 7px 12px; border-radius: 20px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); font-size: 12px; font-weight: 500;
+  cursor: pointer; white-space: nowrap;
+  font-family: inherit; flex-shrink: 0;
+}
+.qa-btn:hover { background: var(--bg-deep); }
+
+/* ── suggestion chips ── */
+#suggestion-chips {
+  display: flex; flex-direction: column;
+  gap: 8px; margin-top: 24px; padding: 0 8px;
+}
+.chip-btn {
+  padding: 10px 14px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface);
+  font-size: 13px; color: var(--text-mid);
+  cursor: pointer; font-family: inherit; text-align: left;
+}
+.chip-btn:hover { background: var(--bg-deep); }
 </style>
 </head>
 <body>
@@ -375,13 +407,6 @@ body {
       </div>
     </div>
     <div class="hdr-right">
-      <button class="icon-btn" onclick="exportMealLog()" title="Export meals">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="7 10 12 15 17 10"/>
-          <line x1="12" y1="15" x2="12" y2="3"/>
-        </svg>
-      </button>
       <button class="icon-btn" onclick="clearChat()" title="Clear chat">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="3 6 5 6 21 6"/>
@@ -402,6 +427,11 @@ body {
       <div class="ei">🥗</div>
       <h2>Ready to track!</h2>
       <p>Tell me what you ate, ask for your daily stats, or load a meal template.</p>
+      <div id="suggestion-chips">
+        <button class="chip-btn" onclick="sendSuggestion('I had scrambled eggs for breakfast')">"I had scrambled eggs for breakfast"</button>
+        <button class="chip-btn" onclick="sendSuggestion('Show today\'s stats')">"Show today's stats"</button>
+        <button class="chip-btn" onclick="sendSuggestion('Log my morning oats template')">"Log my morning oats template"</button>
+      </div>
     </div>
     <div id="typing">
       <div class="msg-avatar">🥗</div>
@@ -409,6 +439,12 @@ body {
         <div class="td"></div><div class="td"></div><div class="td"></div>
       </div>
     </div>
+  </div>
+
+  <div id="quick-actions">
+    <button class="qa-btn" onclick="quickAction('photo')">📷 Photo</button>
+    <button class="qa-btn" onclick="quickAction('templates')">☰ Templates</button>
+    <button class="qa-btn" onclick="quickAction('stats')">📊 Today's Stats</button>
   </div>
 
   <div id="input-bar">
@@ -452,7 +488,7 @@ body {
 // ── Constants ────────────────────────────────────────────────────────────────────
 const API_URL  = "https://script.google.com/macros/s/AKfycbwNq6SM9VzEFcBh6z_LDOO_p4BRZdnsv0W_Sn3gXZAiz9tSkZvW6qSPIh-HqXjbwDl6aQ/exec";
 const APP_NAME = "🥗 Calorie Tracker";
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID";
+const GOOGLE_CLIENT_ID = "796361789204-qbjjlu0kve2is1jn5mkbfdnas1f4p10e.apps.googleusercontent.com";
 const SESSION_KEY = "ct_session";
 const HISTORY_KEY = "ct_chat_history";
 const MAX_MSGS    = 100;
@@ -483,7 +519,7 @@ async function apiFetch(action, body = {}) {
   window.__apiCallLog.push({ action, body: JSON.parse(JSON.stringify(body)) });
 
   if (action === 'chat'           && window.__mockChatFail)          throw new Error('mocked chat failure');
-  if (action === 'chat'           && window.__mockChatResponse)      return { response: window.__mockChatResponse };
+  if (action === 'chat'           && window.__mockChatResponse)      return { reply: window.__mockChatResponse };
   if (action === 'logMeal'        && window.__mockLogMealFail)       throw new Error('mocked logMeal failure');
   if (action === 'logMeal'        && window.__mockLogMeal)           return window.__mockLogMeal;
   if (action === 'getStats'       && window.__mockStats)             return window.__mockStats;
@@ -886,7 +922,7 @@ async function processLogin(email, name) {
       showAlert('Configuration error', 'App configuration error — please contact the owner', '⚠️');
       return;
     }
-    if (!data.ok) {
+    if (!data.allowed) {
       showAlert('Access restricted', 'Access restricted — this app is private');
       return;
     }
@@ -1131,7 +1167,9 @@ async function sendMsg() {
     const data = await apiFetch('chat', { messages: apiHistory, systemPrompt });
     setTyping(false);
 
-    const rawText = data.response || data.content || data.text || '';
+    if (data.error) throw new Error(data.error);
+
+    const rawText = data.reply || data.response || data.content || data.text || '';
     if (!rawText) throw new Error('empty response');
 
     const parsed = parseClaudeResponse(rawText);
@@ -1292,6 +1330,26 @@ window.__setPendingPhoto    = (data, mediaType) => {
   document.getElementById('btn-photo').classList.add('has-photo');
 };
 window.__showPhotoEditCard  = (payload) => showPhotoEditCard(payload);
+window.__sendSuggestion     = (text)    => sendSuggestion(text);
+window.__quickAction        = (id)      => quickAction(id);
+
+// ── Quick actions / suggestion chips ─────────────────────────────────────────────
+function sendSuggestion(text) {
+  const input = document.getElementById('msg-input');
+  input.value = text;
+  onInputChange();
+  sendMsg();
+}
+
+function quickAction(id) {
+  if (id === 'photo') {
+    triggerPhotoUpload();
+  } else if (id === 'templates') {
+    sendSuggestion('Show my templates');
+  } else if (id === 'stats') {
+    sendSuggestion("Show today's stats");
+  }
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────────
 (function boot() {
