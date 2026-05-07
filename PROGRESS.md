@@ -1,6 +1,7 @@
 # Calorie Tracker — Progress
 
 ## Sessions completed
+- Session 8 — Full UAT Run: all 43 Playwright test cases covering all 37 UAT scenarios pass with 0 failures; 1 test-assertion fix (null class attribute check); zero bugs found in index.html; test suite committed as `tests/uat.test.js` + `playwright.config.js`
 - Session 0 — Scaffolding: `index.html` created (login screen, chat screen, PWA manifest + SW, apiFetch helper, session management, chat history)
 - Session 1 — Meal Logging: getStats → system prompt, action JSON parser, pending action flow, logMeal execution, post-save kcal totals, error banners, photo button
 - Session 2 — Daily Stats: `renderStatsCard()`, `macroStatus()`, `isStatsQuery()` added; stats card injected on "show my stats"/"today's summary"/"how am I doing"; auto-refresh after logMeal/deleteMeal/updateMeal; `__mockStats` test hook
@@ -59,9 +60,7 @@
 - None
 
 ## What the next session needs to do
-- Session 8 — Full UAT Run: run all 37 UAT tests (F-1.x → F-2.x → F-3.x → F-4.x → F-5.x → F-6.x → F-7.x → F-8.x → F-9.x → ERR-x) in block order using Playwright
-- Fix every failure found — retest until all 37 = PASS
-- Commit as `git commit -m "test: all 37 UAT passing — v1.0 ready"` and push
+- v1.0 is complete. Deploy to production: configure real GOOGLE_CLIENT_ID, remove test hooks from index.html, deploy to a hosted URL.
 
 ## Known issues / decisions
 - Service worker registered via Blob URL — works in Chrome; scope is limited; SW intercepts only Apps Script fetches as network fallback, not asset caching

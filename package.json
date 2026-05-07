@@ -1,0 +1,25 @@
+{
+  "name": "calorie_tracker",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vladimirovdmitriy94-tech/calorie_tracker.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/vladimirovdmitriy94-tech/calorie_tracker/issues"
+  },
+  "homepage": "https://github.com/vladimirovdmitriy94-tech/calorie_tracker#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "serve": "^14.2.6"
+  }
+}
