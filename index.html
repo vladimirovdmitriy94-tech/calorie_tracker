@@ -398,9 +398,18 @@ function saveSession(s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); 
 function clearSession()  { localStorage.removeItem(SESSION_KEY); }
 
 async function apiFetch(action, body = {}) {
-  if (action === 'chat'    && window.__mockChatFail)    throw new Error('mocked chat failure');
-  if (action === 'logMeal' && window.__mockLogMealFail) throw new Error('mocked logMeal failure');
-  if (action === 'getStats' && window.__mockStats)      return window.__mockStats;
+  // Always log every call (before mock short-circuits)
+  window.__lastApiCall = { action, body };
+  if (!window.__apiCallLog) window.__apiCallLog = [];
+  window.__apiCallLog.push({ action, body: JSON.parse(JSON.stringify(body)) });
+
+  if (action === 'chat'           && window.__mockChatFail)          throw new Error('mocked chat failure');
+  if (action === 'chat'           && window.__mockChatResponse)      return { response: window.__mockChatResponse };
+  if (action === 'logMeal'        && window.__mockLogMealFail)       throw new Error('mocked logMeal failure');
+  if (action === 'logMeal'        && window.__mockLogMeal)           return window.__mockLogMeal;
+  if (action === 'getStats'       && window.__mockStats)             return window.__mockStats;
+  if (action === 'getTemplate'    && window.__mockTemplate  != null) return window.__mockTemplate;
+  if (action === 'updateTemplate' && window.__mockUpdateTemplate)    return window.__mockUpdateTemplate;
   const res = await fetch(API_URL, {
     method: "POST",
     body: JSON.stringify({ ...body, action, userEmail: getSession()?.email, date: localDateString() })
@@ -421,14 +430,44 @@ function saveHistory() {
 
 // ── Action JSON parser ────────────────────────────────────────────────────────────
 function parseClaudeResponse(text) {
-  const re = /\{"action":\s*"[^"]+",\s*"payload":\s*\{[^}]*\}\}/g;
-  const matches = text.match(re);
-  const clean = text.replace(re, "").trim();
-  if (!matches) return { text: clean, action: null };
+  // Try fenced code block first
+  const cbMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+  let jsonStr = null, clean = text;
+
+  if (cbMatch) {
+    jsonStr = cbMatch[1];
+    clean   = text.replace(cbMatch[0], '').trim();
+  } else {
+    const idx = text.indexOf('{"action"');
+    if (idx !== -1) {
+      let depth = 0, inStr = false, esc = false;
+      for (let i = idx; i < text.length; i++) {
+        const ch = text[i];
+        if (esc)               { esc = false; continue; }
+        if (ch === '\\' && inStr) { esc = true; continue; }
+        if (ch === '"')        { inStr = !inStr; continue; }
+        if (!inStr) {
+          if (ch === '{') depth++;
+          else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+              jsonStr = text.slice(idx, i + 1);
+              clean   = (text.slice(0, idx) + text.slice(i + 1)).trim();
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (!jsonStr) return { text: text.trim(), action: null };
   try {
-    const obj = JSON.parse(matches[0]);
-    return { text: clean, action: obj.action, payload: obj.payload };
-  } catch { return { text: clean, action: null }; }
+    const obj = JSON.parse(jsonStr);
+    if (obj.action && obj.payload !== undefined)
+      return { text: clean, action: obj.action, payload: obj.payload };
+  } catch {}
+  return { text: text.trim(), action: null };
 }
 
 function isAffirmative(t) {
@@ -491,8 +530,12 @@ function renderStatsCard(stats) {
 // ── System prompt with live stats ────────────────────────────────────────────────
 async function buildSystemPromptFull() {
   const s = getSession();
-  let stats = {};
+  let stats = {}, templates = [];
   try { stats = await apiFetch('getStats'); } catch {}
+  try {
+    const tpl = await apiFetch('getTemplate', {});
+    templates = tpl.templates || (Array.isArray(tpl) ? tpl : []);
+  } catch {}
 
   const targets     = stats.targets || {};
   const meals       = stats.meals   || [];
@@ -500,8 +543,16 @@ async function buildSystemPromptFull() {
   const remaining   = (targets.calories || 0) - consumed;
 
   const todaysMeals = meals.length
-    ? meals.map(m => `- ${m.mealType || 'meal'}: ${m.name} (${m.calories}kcal)`).join('\n')
+    ? meals.map(m =>
+        `- ${m.mealType || 'meal'} [ID:${m.id}]: ${m.name} — ${m.calories}kcal | P:${m.protein || 0}g F:${m.fat || 0}g C:${m.carbs || 0}g${m.ingredients ? ' | Ingredients: ' + m.ingredients : ''}`
+      ).join('\n')
     : 'Nothing logged yet';
+
+  const templateList = templates.length
+    ? templates.map(t =>
+        `- "${t.templateName}": ${t.calories}kcal | P:${t.protein}g F:${t.fat}g C:${t.carbs}g | Ingredients: ${t.ingredients}`
+      ).join('\n')
+    : 'No templates saved yet';
 
   return `You are a nutrition assistant for a personal calorie tracker.
 User: ${s?.name || 'User'} | Today: ${localDateString()} | Timezone: Europe/Rome
@@ -513,13 +564,19 @@ TODAY:
 ${todaysMeals}
 Running: ${consumed}kcal consumed | ${remaining}kcal remaining
 
+SAVED TEMPLATES:
+${templateList}
+
 RULES:
 - Ask ONE clarifying question for unclear quantities, never guess
 - Confirm BEFORE action JSON. Never both in same turn.
 - Never show raw JSON to user
 - After any save: append "You've now logged X kcal — Y remaining"
-- Never modify a template unless user explicitly asks
-- Meal suggestions: always 2-3 options with calories`;
+- Meal suggestions: always 2-3 options with calories
+- To log from template: use logMeal action with notes="from template: [templateName]"
+- Partial override (e.g. "without bread"): recalculate macros, use notes="modified from template: [templateName] (without [item])"
+- updateTemplate: ONLY when user explicitly asks to update/create/save a template. Always confirm first, never both confirm and action JSON in same turn.
+- Template keyword/mealType search with no matches: respond with exactly "No saved templates found for that search"`;
 }
 
 // ── Error banner ──────────────────────────────────────────────────────────────────
@@ -548,6 +605,16 @@ async function executeAction(action, payload) {
 
     if (!result || (!result.ok && !result.id)) throw new Error(result?.error || 'Save failed');
 
+    if (action === 'updateTemplate') {
+      const name = payload.templateName || 'Template';
+      const aiMsg = { role: 'ai', content: `"${name}" template saved!`, time: nowTime() };
+      chatMsgs.push(aiMsg);
+      saveHistory();
+      pushMsg(aiMsg);
+      return;
+    }
+
+    // logMeal / deleteMeal / updateMeal
     let stats = {};
     try { stats = await apiFetch('getStats'); } catch {}
     const consumed  = stats.consumed || 0;
@@ -905,12 +972,18 @@ function clearChat() {
 })();
 
 // ── Test hooks ────────────────────────────────────────────────────────────────────
-window.__testLogin       = (email, name) => processLogin(email, name);
-window.__setSession      = (s)           => saveSession(s);
-window.__mockChatFail    = false;
-window.__mockLogMealFail = false;
-window.__mockStats       = null;
-window.__setPendingAction = (action, payload) => { pendingAction = { action, payload }; };
+window.__testLogin          = (email, name) => processLogin(email, name);
+window.__setSession         = (s)           => saveSession(s);
+window.__mockChatFail       = false;
+window.__mockLogMealFail    = false;
+window.__mockStats          = null;
+window.__mockTemplate       = null;   // {templates:[...]} or null to pass-through
+window.__mockUpdateTemplate = null;   // e.g. {ok:true} to stub success
+window.__mockLogMeal        = null;   // e.g. {ok:true, id:'test_id'} to stub success
+window.__mockChatResponse   = null;   // string to stub Claude text response
+window.__apiCallLog         = [];
+window.__clearApiLog        = ()            => { window.__apiCallLog = []; };
+window.__setPendingAction   = (action, payload) => { pendingAction = { action, payload }; };
 Object.defineProperty(window, '__pendingAction', { get: () => pendingAction });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────────
