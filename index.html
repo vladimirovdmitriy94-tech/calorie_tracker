@@ -886,7 +886,7 @@ async function processLogin(email, name) {
       showAlert('Configuration error', 'App configuration error — please contact the owner', '⚠️');
       return;
     }
-    if (!data.ok) {
+    if (!data.allowed) {
       showAlert('Access restricted', 'Access restricted — this app is private');
       return;
     }
