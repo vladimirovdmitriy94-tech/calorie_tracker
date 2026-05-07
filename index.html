@@ -285,6 +285,88 @@ body {
 .meal-chip-name { display: block; font-size: 12px; font-weight: 500; color: var(--text); }
 .meal-chip-cal  { display: block; font-size: 11px; color: var(--text-mid); margin-top: 2px; }
 
+/* ── settings screen ── */
+#settings-screen { background: var(--bg); overflow-y: auto; }
+.settings-header {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 52px 16px 14px;
+  display: flex; align-items: center; gap: 10px;
+  flex-shrink: 0;
+}
+.settings-back {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--border); background: transparent;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--avatar-color); flex-shrink: 0;
+}
+.settings-back:hover { background: var(--bg-deep); }
+.settings-title { font-size: 17px; font-weight: 600; color: var(--text); }
+.settings-body { padding: 20px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
+.settings-card {
+  background: var(--surface); border-radius: 14px;
+  padding: 14px; border: 1px solid var(--border);
+}
+.settings-card-title {
+  font-size: 11px; font-weight: 600; color: var(--text-mid);
+  text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px;
+}
+.settings-account-row { display: flex; align-items: center; gap: 12px; }
+.settings-avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--avatar-color); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 16px; flex-shrink: 0;
+}
+.settings-account-name { font-size: 14px; font-weight: 500; color: var(--text); }
+.settings-account-sub  { font-size: 12px; color: var(--text-light); margin-top: 2px; }
+.settings-field { margin-bottom: 12px; }
+.settings-field:last-of-type { margin-bottom: 0; }
+.settings-label {
+  display: block; font-size: 12px; font-weight: 500;
+  color: var(--text-mid); margin-bottom: 4px;
+}
+.settings-input-wrap {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 10px; padding: 0 12px; height: 44px;
+}
+.settings-input-wrap input {
+  flex: 1; border: none; outline: none;
+  font-size: 15px; font-family: inherit;
+  color: var(--text); background: transparent;
+}
+.settings-unit { font-size: 13px; color: var(--text-light); }
+.settings-save-btn {
+  width: 100%; height: 44px; border-radius: 12px; border: none;
+  background: var(--accent); color: #fff;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  font-family: inherit; margin-top: 14px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: background 0.3s;
+}
+.settings-save-btn.saved { background: var(--green); }
+.settings-about-row {
+  display: flex; justify-content: space-between;
+  padding: 6px 0; border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.settings-about-row:last-of-type { border-bottom: none; }
+.settings-about-key { color: var(--text-mid); }
+.settings-about-val { color: var(--text); font-weight: 500; }
+.settings-action-btn {
+  width: 100%; height: 40px; border-radius: 10px;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  font-family: inherit; margin-top: 10px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.settings-action-btn.export {
+  border: 1px solid var(--border); background: var(--bg); color: var(--text-mid);
+}
+.settings-action-btn.signout {
+  border: 1px solid oklch(0.88 0.07 25);
+  background: oklch(0.97 0.02 25); color: var(--red);
+}
+
 /* ── confirm dialog ── */
 #confirm-overlay {
   display: none;
@@ -423,7 +505,7 @@ body {
           <path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
         </svg>
       </button>
-      <button class="icon-btn" title="Settings">
+      <button class="icon-btn" onclick="openSettings()" title="Settings">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -479,6 +561,77 @@ body {
         </svg>
       </button>
       <button id="btn-stop" onclick="stopTyping()" title="Stop">■</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings screen ── -->
+<div id="settings-screen" class="screen hidden">
+  <div class="settings-header">
+    <button class="settings-back" onclick="closeSettings()">
+      <svg width="10" height="16" viewBox="0 0 10 16" fill="none">
+        <path d="M8 2L2 8l6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <span class="settings-title">Settings</span>
+  </div>
+  <div class="settings-body">
+    <!-- Account -->
+    <div class="settings-card">
+      <div class="settings-card-title">Account</div>
+      <div class="settings-account-row">
+        <div class="settings-avatar" id="settings-avatar-letter">?</div>
+        <div>
+          <div class="settings-account-name" id="settings-account-name">—</div>
+          <div class="settings-account-sub" id="settings-account-email">—</div>
+        </div>
+      </div>
+    </div>
+    <!-- Daily Targets -->
+    <div class="settings-card">
+      <div class="settings-card-title">Daily Targets</div>
+      <div class="settings-field">
+        <label class="settings-label">Calories</label>
+        <div class="settings-input-wrap"><input id="st-calories" type="number" min="0"/><span class="settings-unit">kcal</span></div>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label">Protein</label>
+        <div class="settings-input-wrap"><input id="st-protein" type="number" min="0"/><span class="settings-unit">g</span></div>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label">Carbohydrates</label>
+        <div class="settings-input-wrap"><input id="st-carbs" type="number" min="0"/><span class="settings-unit">g</span></div>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label">Fat</label>
+        <div class="settings-input-wrap"><input id="st-fat" type="number" min="0"/><span class="settings-unit">g</span></div>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label">Fiber (optional)</label>
+        <div class="settings-input-wrap"><input id="st-fiber" type="number" min="0"/><span class="settings-unit">g</span></div>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label">Breakfast target</label>
+        <div class="settings-input-wrap"><input id="st-breakfast" type="number" min="0"/><span class="settings-unit">kcal</span></div>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label">Lunch target</label>
+        <div class="settings-input-wrap"><input id="st-lunch" type="number" min="0"/><span class="settings-unit">kcal</span></div>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label">Dinner target</label>
+        <div class="settings-input-wrap"><input id="st-dinner" type="number" min="0"/><span class="settings-unit">kcal</span></div>
+      </div>
+      <button class="settings-save-btn" id="settings-save-btn" onclick="saveTargetsForm()">Save Targets</button>
+    </div>
+    <!-- About + actions -->
+    <div class="settings-card">
+      <div class="settings-card-title">About</div>
+      <div class="settings-about-row"><span class="settings-about-key">Version</span><span class="settings-about-val">1.0.0</span></div>
+      <div class="settings-about-row"><span class="settings-about-key">Model</span><span class="settings-about-val">Claude Haiku</span></div>
+      <div class="settings-about-row"><span class="settings-about-key">Data</span><span class="settings-about-val">Google Sheets</span></div>
+      <button class="settings-action-btn export" onclick="exportMealLog()">⬇ Export meal data (CSV)</button>
+      <button class="settings-action-btn signout" onclick="signOut()">Sign Out</button>
     </div>
   </div>
 </div>
@@ -1406,6 +1559,85 @@ window.__sendSuggestion     = (text)    => sendSuggestion(text);
 window.__quickAction        = (id)      => quickAction(id);
 window.__stopTyping         = ()        => stopTyping();
 window.__getAbortController = ()        => currentAbortController;
+
+// ── Settings screen ──────────────────────────────────────────────────────────────
+async function openSettings() {
+  const s = getSession();
+  // Populate account info
+  const letter = (s?.name || s?.email || '?')[0].toUpperCase();
+  document.getElementById('settings-avatar-letter').textContent = letter;
+  document.getElementById('settings-account-name').textContent  = s?.name  || '—';
+  document.getElementById('settings-account-email').textContent = s?.email || '—';
+
+  // Load current targets
+  try {
+    const stats = await apiFetch('getStats');
+    const t = (!stats.error && stats.targets) ? stats.targets : {};
+    document.getElementById('st-calories').value  = t.calories     || '';
+    document.getElementById('st-protein').value   = t.protein      || '';
+    document.getElementById('st-carbs').value      = t.carbs        || '';
+    document.getElementById('st-fat').value        = t.fat          || '';
+    document.getElementById('st-fiber').value      = t.fiber        || '';
+    document.getElementById('st-breakfast').value  = t.breakfastCal || '';
+    document.getElementById('st-lunch').value      = t.lunchCal     || '';
+    document.getElementById('st-dinner').value     = t.dinnerCal    || '';
+  } catch {}
+
+  showScreen('settings-screen');
+}
+
+function closeSettings() {
+  showScreen('chat-screen');
+}
+
+async function saveTargetsForm() {
+  const num = id => { const v = document.getElementById(id).value; return v !== '' ? +v : undefined; };
+  const payload = {};
+  const fields = {
+    calories: num('st-calories'), protein:  num('st-protein'),
+    carbs:    num('st-carbs'),    fat:      num('st-fat'),
+    fiber:    num('st-fiber'),    breakfastCal: num('st-breakfast'),
+    lunchCal: num('st-lunch'),   dinnerCal:    num('st-dinner'),
+  };
+  Object.entries(fields).forEach(([k, v]) => { if (v !== undefined) payload[k] = v; });
+
+  const btn = document.getElementById('settings-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const result = await apiFetch('setTargets', payload);
+    if (result.ok || result.success) {
+      btn.classList.add('saved');
+      btn.textContent = '✓ Saved!';
+      setTimeout(() => {
+        btn.classList.remove('saved');
+        btn.textContent = 'Save Targets';
+        btn.disabled = false;
+      }, 2000);
+    } else {
+      throw new Error(result.error || 'save failed');
+    }
+  } catch {
+    btn.textContent = 'Save Targets';
+    btn.disabled = false;
+    showBanner('Could not save targets — please try again', null);
+  }
+}
+
+function signOut() {
+  showConfirm(
+    'Sign out?',
+    'You will need to sign in again to access the app.',
+    'Sign Out',
+    () => {
+      clearSession();
+      chatMsgs = [];
+      pendingAction = null;
+      localStorage.removeItem(HISTORY_KEY);
+      showScreen('login-screen');
+    }
+  );
+}
 
 // ── Quick actions / suggestion chips ─────────────────────────────────────────────
 function sendSuggestion(text) {
