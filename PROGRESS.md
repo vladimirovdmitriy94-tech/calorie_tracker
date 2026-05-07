@@ -6,6 +6,7 @@
 - Session 2 — Daily Stats: `renderStatsCard()`, `macroStatus()`, `isStatsQuery()` added; stats card injected on "show my stats"/"today's summary"/"how am I doing"; auto-refresh after logMeal/deleteMeal/updateMeal; `__mockStats` test hook
 - Session 3 — Meal Templates: templates fetched via `getTemplate` and injected into system prompt as `SAVED TEMPLATES:` block; TODAY section now includes full macros + ID per meal so Claude can copy exact values; `updateTemplate` action handled in `executeAction`; `parseClaudeResponse` upgraded to balanced-brace parser with string-escape awareness + code-block fallback; test hooks `__mockTemplate`, `__mockUpdateTemplate`, `__mockLogMeal`, `__mockChatResponse`, `__apiCallLog`, `__clearApiLog` added
 - Session 4 — Targets: `setTargets` pending action flow added to `executeAction`; `isTargetsQuery()` detects "show my current targets" / "what are my macro goals"; `renderTargetsCard()` displays targets-only readable card; targets query intercept added to `sendMsg`; `__mockSetTargets` test hook added; system prompt updated with setTargets field names
+- Session 5 — Edit & Delete: `deleteMeal` and `updateMeal` pending action flows added to `executeAction`; not-found handling for deleteMeal shows "No [mealType] logged today to delete" friendly message; distinct confirm messages per action type ("Meal deleted." / "Meal updated."); stats refresh after delete/edit; `__mockDeleteMeal` and `__mockUpdateMeal` test hooks added; system prompt updated with deleteMeal/updateMeal rules
 
 ## UAT tests passing
 - F-1.1-T: Login screen loads, Google button visible, no app content behind it
@@ -37,17 +38,19 @@
 - F-5.2-T: "set breakfast target to 450 kcal and lunch to 700 kcal" → setTargets called with breakfastCal/lunchCal
 - F-5.3-T: mockStats with April targets → 1800 kcal shown; mockStats with January targets → 2200 kcal shown
 - F-5.4-T: "show my current targets" → readable targets card, no raw JSON
+- F-8.1-T A: "delete my breakfast" → shows "Will delete: Morning Oats, 430 kcal. Confirm?" → yes → "Meal deleted. You've now logged 0 kcal today — 2200 kcal remaining" + stats card refresh
+- F-8.1-T B: "delete my dinner" (none logged) → "No dinner logged today to delete", no error banner, no pending action
+- F-8.2-T: "change chicken to 200g in my lunch" → recalculated 720 kcal shown → yes → "Meal updated. You've now logged 720 kcal today — 1480 kcal remaining" + updateMeal called with correct payload + stats card refresh
 
 ## UAT tests still failing
 - None
 
 ## What the next session needs to do
-- Session 5 — Edit & Delete: `deleteMeal` and `updateMeal` pending action flows; "No [mealType] logged today to delete" error message; stats refresh after delete/edit
-- Session 5 — Tests: F-8.1-T A (delete by type), F-8.1-T B (delete non-existent), F-8.2-T (edit meal)
+- Session 6 — History, Export & Suggestions: export CSV download, clear chat confirmation dialog, verify suggestion flow (F-9.1-T, F-9.2-T, F-9.3-T, F-7.1-T, F-7.2-T)
 
 ## Known issues / decisions
 - Service worker registered via Blob URL — works in Chrome; scope is limited; SW intercepts only Apps Script fetches as network fallback, not asset caching
 - `GOOGLE_CLIENT_ID` is still a placeholder; real Google sign-in requires an OAuth 2.0 client ID configured in Google Cloud Console
-- Test hooks (`__testLogin`, `__setSession`, `__mockChatFail`, `__mockLogMealFail`, `__mockStats`, `__mockTemplate`, `__mockUpdateTemplate`, `__mockLogMeal`, `__mockChatResponse`, `__apiCallLog`, `__setPendingAction`) are intentionally left in; remove before production
+- Test hooks (`__testLogin`, `__setSession`, `__mockChatFail`, `__mockLogMealFail`, `__mockStats`, `__mockTemplate`, `__mockUpdateTemplate`, `__mockLogMeal`, `__mockDeleteMeal`, `__mockUpdateMeal`, `__mockChatResponse`, `__apiCallLog`, `__setPendingAction`) are intentionally left in; remove before production
 - `parseClaudeResponse` now uses a balanced-brace parser with string-escape awareness + code-block fallback; handles nested payloads safely
 - Photo button queues one image per send; base64 image is not persisted to localStorage chat history (only text is stored)

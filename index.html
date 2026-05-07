@@ -411,6 +411,8 @@ async function apiFetch(action, body = {}) {
   if (action === 'getTemplate'    && window.__mockTemplate  != null) return window.__mockTemplate;
   if (action === 'updateTemplate' && window.__mockUpdateTemplate)    return window.__mockUpdateTemplate;
   if (action === 'setTargets'     && window.__mockSetTargets)        return window.__mockSetTargets;
+  if (action === 'deleteMeal'     && window.__mockDeleteMeal != null) return window.__mockDeleteMeal;
+  if (action === 'updateMeal'     && window.__mockUpdateMeal != null) return window.__mockUpdateMeal;
   const res = await fetch(API_URL, {
     method: "POST",
     body: JSON.stringify({ ...body, action, userEmail: getSession()?.email, date: localDateString() })
@@ -612,7 +614,9 @@ RULES:
 - Partial override (e.g. "without bread"): recalculate macros, use notes="modified from template: [templateName] (without [item])"
 - updateTemplate: ONLY when user explicitly asks to update/create/save a template. Always confirm first, never both confirm and action JSON in same turn.
 - Template keyword/mealType search with no matches: respond with exactly "No saved templates found for that search"
-- setTargets: when user asks to set/update nutrition targets, extract fields (calories, protein, fat, carbs, fiber, breakfastCal, lunchCal, dinnerCal) and confirm first. Action payload uses those field names exactly.`;
+- setTargets: when user asks to set/update nutrition targets, extract fields (calories, protein, fat, carbs, fiber, breakfastCal, lunchCal, dinnerCal) and confirm first. Action payload uses those field names exactly.
+- deleteMeal: when user asks to delete a meal, find it in TODAY's log by mealType. Show the meal name and kcal to confirm ("Will delete: [name], [kcal] kcal. Confirm?"). If the mealType is NOT in TODAY's log, respond exactly: "No [mealType] logged today to delete". Payload: {mealType} or {id}.
+- updateMeal: when user asks to edit/change a meal, recalculate the macros for the changed ingredients and show updated values before confirming. Payload: {id, name?, ingredients?, calories?, protein?, fat?, carbs?, notes?}. Always confirm before action JSON.`;
 }
 
 // ── Error banner ──────────────────────────────────────────────────────────────────
@@ -638,6 +642,16 @@ async function executeAction(action, payload) {
   try {
     const result = await apiFetch(action, payload);
     setTyping(false);
+
+    // Not-found case for delete — friendly message, no error
+    if (action === 'deleteMeal' && result && !result.ok) {
+      const mealType = payload.mealType || 'meal';
+      const aiMsg = { role: 'ai', content: `No ${mealType} logged today to delete`, time: nowTime() };
+      chatMsgs.push(aiMsg);
+      saveHistory();
+      pushMsg(aiMsg);
+      return;
+    }
 
     if (!result || (!result.ok && !result.id)) throw new Error(result?.error || 'Save failed');
 
@@ -665,9 +679,17 @@ async function executeAction(action, payload) {
     const targets   = stats.targets  || {};
     const remaining = (targets.calories || 0) - consumed;
 
-    const idPart    = result.id ? ` (ID: ${result.id})` : '';
-    const aiContent = `Meal logged successfully!${idPart}\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining`;
-    const aiMsg = { role: 'ai', content: aiContent, time: nowTime() };
+    let confirmText;
+    if (action === 'deleteMeal') {
+      confirmText = `Meal deleted.\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining`;
+    } else if (action === 'updateMeal') {
+      confirmText = `Meal updated.\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining`;
+    } else {
+      const idPart = result.id ? ` (ID: ${result.id})` : '';
+      confirmText = `Meal logged successfully!${idPart}\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining`;
+    }
+
+    const aiMsg = { role: 'ai', content: confirmText, time: nowTime() };
     chatMsgs.push(aiMsg);
     saveHistory();
     pushMsg(aiMsg);
@@ -1051,6 +1073,8 @@ window.__mockTemplate       = null;   // {templates:[...]} or null to pass-throu
 window.__mockUpdateTemplate = null;   // e.g. {ok:true} to stub success
 window.__mockSetTargets     = null;   // e.g. {ok:true} to stub success
 window.__mockLogMeal        = null;   // e.g. {ok:true, id:'test_id'} to stub success
+window.__mockDeleteMeal     = null;   // e.g. {ok:true} or {ok:false} to stub delete
+window.__mockUpdateMeal     = null;   // e.g. {ok:true} to stub update
 window.__mockChatResponse   = null;   // string to stub Claude text response
 window.__apiCallLog         = [];
 window.__clearApiLog        = ()            => { window.__apiCallLog = []; };
