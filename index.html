@@ -1058,7 +1058,25 @@ async function executeAction(action, payload) {
       return;
     }
 
-    // logMeal / deleteMeal / updateMeal — fetch fresh stats for confirmation
+    // logMeal / deleteMeal / updateMeal
+    // Show the confirmation message FIRST — independent of stats refresh
+    // (stats fetch may take a moment or fail; user must always see clear confirmation)
+    let confirmText;
+    if (action === 'deleteMeal') {
+      confirmText = '✅ Done — Meal deleted from your log.';
+    } else if (action === 'updateMeal') {
+      confirmText = '✅ Done — Meal updated in your log.';
+    } else {
+      const idPart = result.id ? ` (ID: ${result.id})` : '';
+      confirmText = `✅ Done — Meal logged to today's log!${idPart}`;
+    }
+
+    const confirmMsg = { role: 'ai', content: confirmText, time: nowTime() };
+    chatMsgs.push(confirmMsg);
+    saveHistory();
+    pushMsg(confirmMsg);
+
+    // Then fetch fresh stats for follow-up totals + stats card
     setTyping(true);
     let stats = {};
     try {
@@ -1072,22 +1090,16 @@ async function executeAction(action, payload) {
     const remaining = (targets.calories || 0) - consumed;
     const hasStats  = !!(stats.consumed !== undefined && targets.calories);
 
-    let confirmText;
-    if (action === 'deleteMeal') {
-      confirmText = `✅ Meal deleted.${hasStats ? `\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining` : ''}`;
-    } else if (action === 'updateMeal') {
-      confirmText = `✅ Meal updated.${hasStats ? `\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining` : ''}`;
-    } else {
-      const idPart = result.id ? ` (ID: ${result.id})` : '';
-      confirmText = `✅ Meal logged!${idPart}${hasStats ? `\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining` : ''}`;
-    }
-
-    const aiMsg = { role: 'ai', content: confirmText, time: nowTime() };
-    chatMsgs.push(aiMsg);
-    saveHistory();
-    pushMsg(aiMsg);
-
     if (hasStats) {
+      const totalsMsg = {
+        role: 'ai',
+        content: `You've now logged ${consumed} kcal today — ${remaining} kcal remaining`,
+        time: nowTime()
+      };
+      chatMsgs.push(totalsMsg);
+      saveHistory();
+      pushMsg(totalsMsg);
+
       const statsMsg = { role: 'ai', content: renderStatsCard(stats), html: true, time: nowTime() };
       chatMsgs.push(statsMsg);
       saveHistory();

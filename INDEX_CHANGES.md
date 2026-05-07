@@ -119,6 +119,37 @@ Full feature-complete build. All 37 UAT scenarios passing (43 Playwright tests).
 
 ---
 
+### Commit 5 — Apps Script date bug + immediate confirmation message
+
+**api.gs (server-side) — root cause fix:**
+- New helper: `dateOnly(val)` — formats Date objects (which Sheets returns from date-formatted columns) back to "yyyy-MM-dd" string. Previously `String(dateObj).substring(0,10)` returned "Fri May 08" which never matched "2026-05-08", silently breaking every date-scoped query.
+- `getStats` — `Meals_Log` filter and `User_Targets` filter now use `dateOnly()` → meals appear in stats, latest target row is found
+- `getStats` — sort uses `dateOnly()` for stable comparison
+- `setTargets` — upsert lookup uses `dateOnly()` → same-day saves update existing row instead of duplicating
+- `deleteMeal` — by-mealType match uses `dateOnly()` → today's meals can actually be deleted
+- `getLog` / `exportData` — date-range filters and sort use `dateOnly()`
+
+**index.html — confirmation message restructure:**
+- `executeAction()` for logMeal/deleteMeal/updateMeal now pushes the confirmation message **immediately** after the API call succeeds, before the post-action `getStats` fetch. Previously the confirmation was built using the stats result, so a stats-fetch failure could delay or hide the kcal-totals portion.
+- Updated wording: "✅ Done — Meal logged to today's log!" / "✅ Done — Meal deleted from your log." / "✅ Done — Meal updated in your log."
+- Kcal totals + stats card are pushed as a separate follow-up message when `hasStats` is true
+
+**tests/uat.test.js — new tests (7 added):**
+- `CONFIRM-1-T` — logMeal confirmation shown with "Done" + ID
+- `CONFIRM-2-T` — confirmation still shown when post-action getStats fails
+- `CONFIRM-3-T` — three-message flow: confirmation, kcal totals, stats card
+- `CONFIRM-4-T` — real API logMeal response (`{success:true, id, date}` only) triggers confirmation
+- `STG-1-T` — settings pre-fills all 8 fields from real getStats response
+- `STG-2-T` — setTargets always sends all 8 fields
+- `STG-3-T` — stats card shows target from User_Targets row even with no meals
+
+**UAT.md — new test sections documented:**
+- Block UI (UI-1..4), Block TPLR (1..3), Block NORM (1..4), Block CONFIRM (1..4), Block STG (1..3), Block API (1..3)
+
+**Result: 62/62 Playwright tests pass.**
+
+---
+
 ### Commit 4 — real API compatibility + template rendering + settings fixes
 
 **CSS added:**
@@ -198,3 +229,8 @@ Full feature-complete build. All 37 UAT scenarios passing (43 Playwright tests).
 | Settings save error | Goes to hidden chat banner (invisible) | Shown in `#settings-error` in settings screen |
 | Settings save fields | Partial send (undefined fields omitted → zeros existing values) | All 8 fields always sent (empty → 0) |
 | Console.log debug | 6 calls left in (chat/getStats/updateTemplate/etc.) | All removed |
+| Apps Script date filter | `String(dateObj).substring(0,10)` → never matches `"yyyy-MM-dd"` | `dateOnly()` helper handles Date objects |
+| Stats meals visible | Empty (date filter broken server-side) | Today's meals appear correctly |
+| User_Targets row | Never matched (DateFrom comparison broken) | Latest row matched for user+date |
+| Confirmation timing | Built using post-action stats (delayed/hidden if stats fail) | Pushed immediately after API success |
+| Confirmation wording | "✅ Meal logged!" | "✅ Done — Meal logged to today's log!" |

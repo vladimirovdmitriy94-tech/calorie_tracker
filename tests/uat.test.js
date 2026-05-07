@@ -1228,3 +1228,217 @@ test('NORM-4-T · normalizeStats maps totals.calories → consumed without overw
   );
   expect(mock.consumed).toBe(1400);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Block CONFIRM — Confirmation message after logMeal/deleteMeal/updateMeal
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('CONFIRM-1-T · After logMeal succeeds → "Done — Meal logged" confirmation appears immediately', async ({ page }) => {
+  await loginAs(page);
+  await setMockStats(page, MOCK_STATS);
+  await page.evaluate(() => { window.__mockLogMeal = { success: true, id: 42, date: '2026-05-08' }; });
+  await setMockChat(page,
+    'Ready to log 500 kcal. Shall I log this?\n' +
+    '{"action":"logMeal","payload":{"mealType":"breakfast","name":"Oats","calories":500,"protein":15,"fat":8,"carbs":75}}'
+  );
+
+  await sendMessage(page, 'add my breakfast');
+  await waitForAiText(page, 'Shall I log this?');
+  await page.evaluate(() => { window.__mockChatResponse = null; });
+  await sendMessage(page, 'yes');
+
+  // Confirmation message should appear with "Done" and "Meal logged"
+  await waitForAiText(page, 'Done');
+  const bubbles = await page.evaluate(() =>
+    [...document.querySelectorAll('.bubble.ai')].map(b => b.textContent)
+  );
+  const confirmMsg = bubbles.find(b => b.includes('Done') && b.includes('Meal logged'));
+  expect(confirmMsg).toBeTruthy();
+  // Should include the ID
+  expect(confirmMsg).toContain('ID: 42');
+});
+
+test('CONFIRM-2-T · Confirmation shown even if post-action getStats fails', async ({ page }) => {
+  await loginAs(page);
+  await setMockStats(page, MOCK_STATS);
+  await page.evaluate(() => { window.__mockLogMeal = { success: true, id: 99 }; });
+  await setMockChat(page,
+    'Logging 400 kcal salad. Confirm?\n' +
+    '{"action":"logMeal","payload":{"mealType":"lunch","name":"Salad","calories":400,"protein":20,"fat":10,"carbs":40}}'
+  );
+
+  await sendMessage(page, 'log my salad lunch');
+  await waitForAiText(page, 'Confirm?');
+
+  // Make post-action getStats fail (return error)
+  await page.evaluate(() => {
+    window.__mockChatResponse = null;
+    // Override mock stats to return an error after logging
+    let callCount = 0;
+    const originalMock = window.__mockStats;
+    Object.defineProperty(window, '__mockStats', {
+      get() { callCount++; return callCount > 1 ? { error: 'stats failed' } : originalMock; },
+      set(v) { /* allow re-setting */ },
+      configurable: true
+    });
+  });
+
+  await sendMessage(page, 'yes');
+  await waitForAiText(page, 'Done');
+
+  // Confirmation message should still appear even though stats failed
+  const bubbles = await page.evaluate(() =>
+    [...document.querySelectorAll('.bubble.ai')].map(b => b.textContent)
+  );
+  const confirmMsg = bubbles.find(b => b.includes('Done') && b.includes('Meal logged'));
+  expect(confirmMsg).toBeTruthy();
+});
+
+test('CONFIRM-3-T · After logMeal → kcal totals shown when stats has data', async ({ page }) => {
+  await loginAs(page);
+  await page.evaluate(() => {
+    window.__mockStats = {
+      consumed: 500,
+      targets: { calories: 2200, protein: 150, fat: 70, carbs: 250 },
+      meals: [{ mealType: 'breakfast', name: 'Oats', calories: 500, protein: 15, fat: 8, carbs: 75 }]
+    };
+    window.__mockLogMeal = { success: true, id: 1 };
+  });
+  await setMockChat(page,
+    'Ready: 500 kcal oats. Confirm?\n' +
+    '{"action":"logMeal","payload":{"mealType":"breakfast","name":"Oats","calories":500,"protein":15,"fat":8,"carbs":75}}'
+  );
+
+  await sendMessage(page, 'log oats');
+  await waitForAiText(page, 'Confirm?');
+  await page.evaluate(() => { window.__mockChatResponse = null; });
+  await sendMessage(page, 'yes');
+  await waitForAiText(page, 'Done');
+
+  // Both confirmation AND kcal totals should appear as separate messages
+  const bubbles = await page.evaluate(() =>
+    [...document.querySelectorAll('.bubble.ai')].map(b => b.textContent)
+  );
+  const confirm = bubbles.find(b => b.includes('Done') && b.includes('Meal logged'));
+  const totals  = bubbles.find(b => b.includes('logged 500 kcal') && b.includes('remaining'));
+  expect(confirm).toBeTruthy();
+  expect(totals).toBeTruthy();
+
+  // Stats card should also be shown
+  await page.waitForSelector('.stats-card', { timeout: 3000 });
+});
+
+test('CONFIRM-4-T · Real API logMeal response {success:true, id, date} → confirmation appears', async ({ page }) => {
+  await loginAs(page);
+  await setMockStats(page, MOCK_STATS);
+  // Simulate real API logMeal response (no `ok` field, only `success` + `id` + `date`)
+  await page.evaluate(() => { window.__mockLogMeal = { success: true, id: 7, date: '2026-05-08' }; });
+  await setMockChat(page,
+    'Logging 600 kcal lunch. Confirm?\n' +
+    '{"action":"logMeal","payload":{"mealType":"lunch","name":"Pasta","calories":600,"protein":25,"fat":15,"carbs":80}}'
+  );
+  await clearApiLog(page);
+
+  await sendMessage(page, 'log my pasta lunch');
+  await waitForAiText(page, 'Confirm?');
+  await page.evaluate(() => { window.__mockChatResponse = null; });
+  await sendMessage(page, 'yes');
+  await waitForAiText(page, 'Done');
+
+  // Verify logMeal was called
+  const call = await getLastApiCall(page, 'logMeal');
+  expect(call).not.toBeNull();
+  expect(call.body.calories).toBe(600);
+
+  // Verify confirmation appeared
+  const bubbles = await page.evaluate(() =>
+    [...document.querySelectorAll('.bubble.ai')].map(b => b.textContent)
+  );
+  expect(bubbles.some(b => b.includes('Done') && b.includes('Meal logged'))).toBe(true);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Block STG — Settings real-API integration
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('STG-1-T · Settings: targets pre-fill from real API getStats response', async ({ page }) => {
+  await loginAs(page);
+  // Real API stats response: targets nested with explicit fields
+  await page.evaluate(() => {
+    window.__mockStats = {
+      date: '2026-05-08',
+      totals: { calories: 0, protein: 0, fat: 0, carbs: 0 },
+      targets: {
+        calories: 2400, protein: 160, fat: 75, carbs: 280, fiber: 25,
+        breakfastCal: 600, lunchCal: 800, dinnerCal: 700
+      },
+      meals: []
+    };
+  });
+
+  await page.locator('[onclick="openSettings()"]').click();
+  await page.waitForSelector('#settings-screen:not(.hidden)', { timeout: 3000 });
+  // Wait for fields to populate
+  await page.waitForFunction(() => document.getElementById('st-calories').value !== '', { timeout: 3000 });
+
+  expect(await page.locator('#st-calories').inputValue()).toBe('2400');
+  expect(await page.locator('#st-protein').inputValue()).toBe('160');
+  expect(await page.locator('#st-fat').inputValue()).toBe('75');
+  expect(await page.locator('#st-carbs').inputValue()).toBe('280');
+  expect(await page.locator('#st-fiber').inputValue()).toBe('25');
+  expect(await page.locator('#st-breakfast').inputValue()).toBe('600');
+  expect(await page.locator('#st-lunch').inputValue()).toBe('800');
+  expect(await page.locator('#st-dinner').inputValue()).toBe('700');
+});
+
+test('STG-2-T · Settings: real API setTargets {success:true, dateFrom} response → ✓ Saved', async ({ page }) => {
+  await loginAs(page);
+  await page.evaluate(() => {
+    window.__mockStats = { totals: { calories: 0 }, targets: {}, meals: [] };
+    window.__mockSetTargets = { success: true, updated: true, dateFrom: '2026-05-08' };
+  });
+
+  await page.locator('[onclick="openSettings()"]').click();
+  await page.waitForSelector('#settings-screen:not(.hidden)', { timeout: 3000 });
+
+  await page.locator('#st-calories').fill('2000');
+  await page.locator('#st-protein').fill('140');
+  await clearApiLog(page);
+  await page.locator('#settings-save-btn').click();
+
+  await page.waitForFunction(() => document.getElementById('settings-save-btn').textContent.includes('Saved'), { timeout: 5000 });
+
+  // Verify all 8 fields sent (no field omitted as undefined)
+  const call = await getLastApiCall(page, 'setTargets');
+  expect(call).not.toBeNull();
+  expect(call.body.calories).toBe(2000);
+  expect(call.body.protein).toBe(140);
+  expect(call.body).toHaveProperty('fat');
+  expect(call.body).toHaveProperty('carbs');
+  expect(call.body).toHaveProperty('fiber');
+  expect(call.body).toHaveProperty('breakfastCal');
+  expect(call.body).toHaveProperty('lunchCal');
+  expect(call.body).toHaveProperty('dinnerCal');
+});
+
+test('STG-3-T · Stats: targets row from User_Targets shown in stats card via real API format', async ({ page }) => {
+  await loginAs(page);
+  // Simulate real API response: targets present (latest row matched), totals 0 (no meals yet today)
+  await page.evaluate(() => {
+    window.__mockStats = {
+      date: '2026-05-08',
+      totals: { calories: 0, protein: 0, fat: 0, carbs: 0 },
+      targets: { calories: 2200, protein: 150, fat: 70, carbs: 250 },
+      meals: []
+    };
+  });
+
+  await sendMessage(page, 'show my stats');
+  await page.waitForSelector('.stats-card', { timeout: 5000 });
+
+  const card = await page.locator('.stats-card').first().textContent();
+  expect(card).toContain('2200');  // target calories from User_Targets
+  expect(card).toContain('150');   // target protein
+  // 0 / 2200 should be shown
+  expect(card).toMatch(/0\s*\/\s*2200/);
+});
