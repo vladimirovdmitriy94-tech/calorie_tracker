@@ -119,6 +119,60 @@ Full feature-complete build. All 37 UAT scenarios passing (43 Playwright tests).
 
 ---
 
+### Commit 4 — real API compatibility + template rendering + settings fixes
+
+**CSS added:**
+- `.templates-list`, `.templates-list-title`, `.template-card`, `.template-card-header`, `.template-card-name`, `.template-card-type`, `.template-card-ingredients`, `.template-card-macros`, `.template-macro` — styled template list card
+
+**HTML changed:**
+- `#settings-error` div added below Save Targets button — inline error display without relying on hidden chat banner
+
+**JS added:**
+- `normalizeStats(stats)` — maps real API `totals.calories → consumed`; normalizes meal keys from TitleCase (`MealType`, `Calories`, …) to camelCase (`mealType`, `calories`, …). Mocks already use camelCase so normalization is a no-op for tests.
+- `normalizeTemplates(tpls)` — maps TitleCase template keys (`TemplateName`, `Calories`, …) to camelCase. Same safe pass-through for mock data.
+- `isTemplatesQuery(t)` — detects "show my templates", "list templates", etc.
+- `renderTemplatesCard(templates)` — returns styled HTML list of template cards (not raw text).
+- `containsHtml(text)` — detects div/span/table/… tags in Claude's reply; used to auto-set `html:true` on AI messages.
+
+**JS changed:**
+- `buildSystemPromptFull()` — applies `normalizeStats` + `normalizeTemplates`; removed debug console.log calls; added system prompt rule: "Respond in plain text only. Do not use HTML tags."
+- `sendMsg()` stats intercept — applies `normalizeStats`; removed console.log
+- `sendMsg()` targets intercept — applies `normalizeStats`; removed console.log
+- `sendMsg()` — **new templates intercept** (before export): detects templates query → calls `getTemplate` → renders `renderTemplatesCard()` (bypasses Claude entirely)
+- `sendMsg()` chat flow — removed `console.log('[chat]')`; AI message now sets `html: containsHtml(parsed.text)` so any residual HTML from Claude renders correctly
+- `executeAction()` — `deleteMeal` not-found check: `!result.ok && !result.success` (real API returns `success`, not `ok`)
+- `executeAction()` — general error check: `!result.ok && !result.success && !result.id` (handles real API `success` field)
+- `executeAction()` updateTemplate — uses `normalizeTemplates` + `renderTemplatesCard` for refreshed list; removed console.log
+- `executeAction()` post-action getStats — applies `normalizeStats`; removed console.log
+- `openSettings()` — applies `normalizeStats` on targets load
+- `saveTargetsForm()` — all 8 fields always sent (empty inputs → 0, not undefined, preventing silent zero-out of existing values); errors shown via `#settings-error` inline element instead of hidden chat banner
+- New test hooks: `window.__normalizeStats`, `window.__normalizeTemplates`, `window.__renderTemplatesCard`, `window.__isTemplatesQuery`
+
+**tests/uat.test.js — new tests (12 added):**
+- `UI-1-T` — suggestion chips visible; clicking sends message
+- `UI-2-T` — quick-action bar: ☰ shows template card, 📊 shows stats card
+- `UI-3-T` — settings save targets → API called with all fields, ✓ Saved! shown
+- `UI-3-T B` — settings save failure → inline `#settings-error` shown, chat banner stays hidden
+- `UI-4-T` — ■ Stop button cancels in-flight request, re-enables input
+- `TPLR-1-T` — "show my templates" → `.templates-list` card rendered, no raw HTML divs
+- `TPLR-2-T` — template card shows name, emoji, ingredients, all 4 macros
+- `TPLR-3-T` — empty template list → "No templates saved yet"
+- `NORM-1-T` — real API format (`totals.calories`) renders correct consumed value in stats card
+- `NORM-2-T` — real API `{success:true}` deleteMeal → "Meal deleted", not "not found"
+- `NORM-3-T` — TitleCase template keys normalized correctly via `normalizeTemplates`
+- `NORM-4-T` — `normalizeStats` maps `totals.calories → consumed` without overwriting existing `consumed`
+
+**tests/uat.test.js — updated:**
+- `F-9.3-T` — export test now opens settings screen first (export button moved to settings in Commit 3)
+
+**tests/helpers.js — changed:**
+- `loginAs()` — sets default `window.__mockTemplate = {found:false, templates:[], count:0}` after reload, preventing real API calls to Google Apps Script during tests (was source of flakiness)
+
+**playwright.config.js — changed:**
+- `reuseExistingServer: true` — allows running test suite against already-running dev server
+
+---
+
 ## What changes between main and fix branch (summary)
 
 | Area | main | fix branch |
@@ -130,8 +184,17 @@ Full feature-complete build. All 37 UAT scenarios passing (43 Playwright tests).
 | Bottom bar | None | 📷 Photo ☰ Templates 📊 Today's Stats pills |
 | While AI thinks | Input disabled, no cancel | ■ Stop button cancels request |
 | Settings screen | Not implemented (button dead) | Full screen with targets form + sign out |
+| Templates display | Not intercepted (Claude replies) | Intercepted → styled card, Claude bypassed |
 | Chat API key | `data.response` | `data.reply` (correct) |
 | Stats error | Silent empty card | Banner shown |
 | Template fetch error | Silent "no templates" | Skipped, Claude not misled |
-| After template save | Short text only | Text + refreshed list |
+| After template save | Short text only | Text + refreshed styled card |
 | After meal log | Stats card always shown | Stats card only if data valid |
+| Real API stats format | Not handled (`consumed` always 0) | `normalizeStats()` maps `totals.calories → consumed` |
+| Real API meal keys | Not handled (TitleCase breaks system prompt) | `normalizeStats()` normalizes TitleCase → camelCase |
+| Real API template keys | Not handled (TitleCase breaks template list) | `normalizeTemplates()` normalizes TitleCase → camelCase |
+| deleteMeal real API | `{success:true}` shows "not found" | Fixed: checks `success` + `ok` |
+| updateMeal real API | `{success:true}` throws error | Fixed: checks `success` + `ok` |
+| Settings save error | Goes to hidden chat banner (invisible) | Shown in `#settings-error` in settings screen |
+| Settings save fields | Partial send (undefined fields omitted → zeros existing values) | All 8 fields always sent (empty → 0) |
+| Console.log debug | 6 calls left in (chat/getStats/updateTemplate/etc.) | All removed |

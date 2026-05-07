@@ -456,6 +456,25 @@ body {
   cursor: pointer; font-family: inherit; text-align: left;
 }
 .chip-btn:hover { background: var(--bg-deep); }
+
+/* ── template list card ── */
+.templates-list { width: 100%; font-size: 13px; white-space: normal; }
+.templates-list-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
+.template-card {
+  background: var(--bg-deep); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 8px;
+}
+.template-card:last-child { margin-bottom: 0; }
+.template-card-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
+.template-card-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.template-card-type { font-size: 11px; color: var(--text-mid); }
+.template-card-ingredients { font-size: 12px; color: var(--text-mid); margin-bottom: 5px; line-height: 1.4; }
+.template-card-macros { display: flex; gap: 6px; flex-wrap: wrap; }
+.template-macro {
+  font-size: 11px; font-weight: 500;
+  color: var(--accent-text); background: var(--accent-light);
+  border-radius: 6px; padding: 2px 7px;
+}
 </style>
 </head>
 <body>
@@ -623,6 +642,7 @@ body {
         <div class="settings-input-wrap"><input id="st-dinner" type="number" min="0"/><span class="settings-unit">kcal</span></div>
       </div>
       <button class="settings-save-btn" id="settings-save-btn" onclick="saveTargetsForm()">Save Targets</button>
+      <div id="settings-error" style="display:none;color:var(--red);font-size:13px;margin-top:8px;text-align:center"></div>
     </div>
     <!-- About + actions -->
     <div class="settings-card">
@@ -847,19 +867,80 @@ function renderTargetsCard(stats) {
   return `<div class="stats-card"><div class="stats-title">🎯 Your Daily Targets</div>${rows}</div>`;
 }
 
+// ── API response normalizers ─────────────────────────────────────────────────
+// Real Apps Script returns totals.calories (not consumed) and TitleCase meal keys.
+// Mocks use camelCase with consumed directly. Both are handled here.
+function normalizeStats(stats) {
+  if (!stats || stats.error) return stats;
+  if (stats.totals !== undefined && stats.consumed === undefined) {
+    stats.consumed = stats.totals.calories || 0;
+  }
+  if (Array.isArray(stats.meals)) {
+    stats.meals = stats.meals.map(m => ({
+      id:          m.id          !== undefined ? m.id          : m.ID,
+      mealType:    m.mealType    !== undefined ? m.mealType    : (m.MealType    || ''),
+      name:        m.name        !== undefined ? m.name        : (m.Name        || ''),
+      ingredients: m.ingredients !== undefined ? m.ingredients : (m.Ingredients || ''),
+      calories:    m.calories    !== undefined ? m.calories    : (m.Calories    || 0),
+      protein:     m.protein     !== undefined ? m.protein     : (m.Protein     || 0),
+      fat:         m.fat         !== undefined ? m.fat         : (m.Fat         || 0),
+      carbs:       m.carbs       !== undefined ? m.carbs       : (m.Carbs       || 0),
+      fiber:       m.fiber       !== undefined ? m.fiber       : (m.Fiber       || 0),
+      notes:       m.notes       !== undefined ? m.notes       : (m.Notes       || ''),
+    }));
+  }
+  return stats;
+}
+
+function normalizeTemplates(tpls) {
+  if (!Array.isArray(tpls)) return [];
+  return tpls.map(t => ({
+    templateName: t.templateName !== undefined ? t.templateName : (t.TemplateName || ''),
+    mealType:     t.mealType     !== undefined ? t.mealType     : (t.MealType     || ''),
+    ingredients:  t.ingredients  !== undefined ? t.ingredients  : (t.Ingredients  || ''),
+    calories:     t.calories     !== undefined ? t.calories     : (t.Calories     || 0),
+    protein:      t.protein      !== undefined ? t.protein      : (t.Protein      || 0),
+    fat:          t.fat          !== undefined ? t.fat          : (t.Fat          || 0),
+    carbs:        t.carbs        !== undefined ? t.carbs        : (t.Carbs        || 0),
+  }));
+}
+
+function isTemplatesQuery(t) {
+  return /show.*(my\s+)?(saved\s+)?templates?|(list|view|see|display).*(my\s+)?templates?|(what|which).*(templates?|saved meals?).*saved|my templates/i.test(t.trim());
+}
+
+function renderTemplatesCard(templates) {
+  if (!templates.length) {
+    return `<div class="templates-list"><div class="templates-list-title">📋 Your Templates</div><div style="color:var(--text-mid);font-size:13px">No templates saved yet. Try "save today's lunch as a template".</div></div>`;
+  }
+  const mealEmoji = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
+  const cards = templates.map(t => {
+    const type  = (t.mealType || '').toLowerCase();
+    const emoji = mealEmoji[type] || '🍽️';
+    return `<div class="template-card">
+<div class="template-card-header"><span class="template-card-name">${escapeHtml(t.templateName || '')}</span><span class="template-card-type">${emoji} ${type || 'any'}</span></div>
+<div class="template-card-ingredients">${escapeHtml(t.ingredients || '')}</div>
+<div class="template-card-macros"><span class="template-macro">${t.calories || 0} kcal</span><span class="template-macro">P: ${t.protein || 0}g</span><span class="template-macro">F: ${t.fat || 0}g</span><span class="template-macro">C: ${t.carbs || 0}g</span></div>
+</div>`;
+  }).join('');
+  return `<div class="templates-list"><div class="templates-list-title">📋 Your Templates (${templates.length})</div>${cards}</div>`;
+}
+
+function containsHtml(text) {
+  return /<\/?(div|span|table|ul|ol|li|section|article)\b/i.test(text);
+}
+
 // ── System prompt with live stats ────────────────────────────────────────────────
 async function buildSystemPromptFull() {
   const s = getSession();
   let stats = {}, templates = [];
   try {
-    const s = await apiFetch('getStats');
-    console.log('[buildSystemPrompt] getStats:', s);
-    if (!s.error) stats = s;
+    const raw = await apiFetch('getStats');
+    if (!raw.error) stats = normalizeStats(raw);
   } catch {}
   try {
     const tpl = await apiFetch('getTemplate', {});
-    console.log('[buildSystemPrompt] getTemplate:', tpl);
-    if (!tpl.error) templates = tpl.templates || (Array.isArray(tpl) ? tpl : []);
+    if (!tpl.error) templates = normalizeTemplates(tpl.templates || (Array.isArray(tpl) ? tpl : []));
   } catch {}
 
   const targets     = stats.targets || {};
@@ -905,7 +986,8 @@ RULES:
 - setTargets: when user asks to set/update nutrition targets, extract fields (calories, protein, fat, carbs, fiber, breakfastCal, lunchCal, dinnerCal) and confirm first. Action payload uses those field names exactly.
 - deleteMeal: when user asks to delete a meal, find it in TODAY's log by mealType. Show the meal name and kcal to confirm ("Will delete: [name], [kcal] kcal. Confirm?"). If the mealType is NOT in TODAY's log, respond exactly: "No [mealType] logged today to delete". Payload: {mealType} or {id}.
 - updateMeal: when user asks to edit/change a meal, recalculate the macros for the changed ingredients and show updated values before confirming. Payload: {id, name?, ingredients?, calories?, protein?, fat?, carbs?, notes?}. Always confirm before action JSON.
-- Photo analysis: when the user sends a food or product photo, describe ingredients and estimate calories+macros. Always set notes="logged from photo" in any logMeal action payload. If portion sizes are unclear or the image is blurry, explicitly say "I'm not fully sure about the portions" in your text response and present all values as estimates for the user to review.`;
+- Photo analysis: when the user sends a food or product photo, describe ingredients and estimate calories+macros. Always set notes="logged from photo" in any logMeal action payload. If portion sizes are unclear or the image is blurry, explicitly say "I'm not fully sure about the portions" in your text response and present all values as estimates for the user to review.
+- Respond in plain text only. Do not use HTML tags, div elements, or any HTML markup in your responses.`;
 }
 
 // ── Error banner ──────────────────────────────────────────────────────────────────
@@ -933,7 +1015,7 @@ async function executeAction(action, payload) {
     setTyping(false);
 
     // Not-found case for delete — friendly message, no error
-    if (action === 'deleteMeal' && result && !result.ok) {
+    if (action === 'deleteMeal' && result && !result.ok && !result.success) {
       const mealType = payload.mealType || 'meal';
       const aiMsg = { role: 'ai', content: `No ${mealType} logged today to delete`, time: nowTime() };
       chatMsgs.push(aiMsg);
@@ -942,7 +1024,7 @@ async function executeAction(action, payload) {
       return;
     }
 
-    if (!result || (!result.ok && !result.id)) throw new Error(result?.error || 'Save failed');
+    if (!result || (!result.ok && !result.success && !result.id)) throw new Error(result?.error || 'Save failed');
 
     if (action === 'updateTemplate') {
       const name = payload.templateName || 'Template';
@@ -954,15 +1036,11 @@ async function executeAction(action, payload) {
       try {
         setTyping(true);
         const tplRes = await apiFetch('getTemplate', {});
-        console.log('[updateTemplate] refreshed templates:', tplRes);
         setTyping(false);
         if (!tplRes.error) {
-          const tpls = tplRes.templates || (Array.isArray(tplRes) ? tplRes : []);
+          const tpls = normalizeTemplates(tplRes.templates || (Array.isArray(tplRes) ? tplRes : []));
           if (tpls.length > 0) {
-            const listText = 'Your saved templates:\n' + tpls.map(t =>
-              `• ${t.templateName}: ${t.calories} kcal | P:${t.protein}g F:${t.fat}g C:${t.carbs}g`
-            ).join('\n');
-            const listMsg = { role: 'ai', content: listText, time: nowTime() };
+            const listMsg = { role: 'ai', content: renderTemplatesCard(tpls), html: true, time: nowTime() };
             chatMsgs.push(listMsg);
             saveHistory();
             pushMsg(listMsg);
@@ -984,9 +1062,8 @@ async function executeAction(action, payload) {
     setTyping(true);
     let stats = {};
     try {
-      const s = await apiFetch('getStats');
-      console.log('[executeAction] post-action getStats:', s);
-      if (!s.error) stats = s;
+      const raw = await apiFetch('getStats');
+      if (!raw.error) stats = normalizeStats(raw);
     } catch {}
     setTyping(false);
 
@@ -1297,10 +1374,10 @@ async function sendMsg() {
     input.disabled = true;
     setTyping(true);
     try {
-      const stats = await apiFetch('getStats');
-      console.log('[getStats] response:', stats);
+      const raw = await apiFetch('getStats');
       setTyping(false);
-      if (stats.error) throw new Error(stats.error);
+      if (raw.error) throw new Error(raw.error);
+      const stats    = normalizeStats(raw);
       const userMsg  = { role: 'user', content: text, time };
       const statsMsg = { role: 'ai', content: renderStatsCard(stats), html: true, time: nowTime() };
       chatMsgs.push(userMsg, statsMsg);
@@ -1325,10 +1402,10 @@ async function sendMsg() {
     input.disabled = true;
     setTyping(true);
     try {
-      const stats = await apiFetch('getStats');
-      console.log('[getStats/targets] response:', stats);
+      const raw = await apiFetch('getStats');
       setTyping(false);
-      if (stats.error) throw new Error(stats.error);
+      if (raw.error) throw new Error(raw.error);
+      const stats      = normalizeStats(raw);
       const userMsg    = { role: 'user', content: text, time };
       const targetsMsg = { role: 'ai', content: renderTargetsCard(stats), html: true, time: nowTime() };
       chatMsgs.push(userMsg, targetsMsg);
@@ -1336,6 +1413,34 @@ async function sendMsg() {
       document.getElementById('chat-empty').style.display = 'none';
       pushMsg(userMsg);
       pushMsg(targetsMsg);
+      input.value = '';
+      onInputChange();
+    } catch {
+      setTyping(false);
+      showBanner('AI is unreachable — please try again', () => sendMsg());
+    } finally {
+      input.disabled = false;
+      input.focus();
+    }
+    return;
+  }
+
+  // ── Templates query intercept ─────────────────────────────────────────────────
+  if (isTemplatesQuery(text)) {
+    input.disabled = true;
+    setTyping(true);
+    try {
+      const tplRes = await apiFetch('getTemplate', {});
+      setTyping(false);
+      if (tplRes.error) throw new Error(tplRes.error);
+      const tpls   = normalizeTemplates(tplRes.templates || (Array.isArray(tplRes) ? tplRes : []));
+      const userMsg = { role: 'user', content: text, time };
+      const tplMsg  = { role: 'ai', content: renderTemplatesCard(tpls), html: true, time: nowTime() };
+      chatMsgs.push(userMsg, tplMsg);
+      saveHistory();
+      document.getElementById('chat-empty').style.display = 'none';
+      pushMsg(userMsg);
+      pushMsg(tplMsg);
       input.value = '';
       onInputChange();
     } catch {
@@ -1392,7 +1497,6 @@ async function sendMsg() {
     setTyping(false);
 
     if (data.error) throw new Error(data.error);
-    console.log('[chat] API response:', data);
 
     const rawText = data.reply || data.response || data.content || data.text || '';
     if (!rawText) throw new Error('empty response');
@@ -1408,7 +1512,7 @@ async function sendMsg() {
 
     // Commit both messages only on success
     const userMsg = { role: 'user', content: text, time };
-    const aiMsg   = { role: 'ai',   content: parsed.text, time: nowTime() };
+    const aiMsg   = { role: 'ai',   content: parsed.text, html: containsHtml(parsed.text), time: nowTime() };
     chatMsgs.push(userMsg, aiMsg);
     saveHistory();
 
@@ -1559,6 +1663,10 @@ window.__sendSuggestion     = (text)    => sendSuggestion(text);
 window.__quickAction        = (id)      => quickAction(id);
 window.__stopTyping         = ()        => stopTyping();
 window.__getAbortController = ()        => currentAbortController;
+window.__normalizeStats     = (s)       => normalizeStats(s);
+window.__normalizeTemplates = (t)       => normalizeTemplates(t);
+window.__renderTemplatesCard = (t)      => renderTemplatesCard(t);
+window.__isTemplatesQuery   = (t)       => isTemplatesQuery(t);
 
 // ── Settings screen ──────────────────────────────────────────────────────────────
 async function openSettings() {
@@ -1571,8 +1679,9 @@ async function openSettings() {
 
   // Load current targets
   try {
-    const stats = await apiFetch('getStats');
-    const t = (!stats.error && stats.targets) ? stats.targets : {};
+    const raw   = await apiFetch('getStats');
+    const stats = (!raw.error) ? normalizeStats(raw) : {};
+    const t = stats.targets || {};
     document.getElementById('st-calories').value  = t.calories     || '';
     document.getElementById('st-protein').value   = t.protein      || '';
     document.getElementById('st-carbs').value      = t.carbs        || '';
@@ -1591,15 +1700,21 @@ function closeSettings() {
 }
 
 async function saveTargetsForm() {
-  const num = id => { const v = document.getElementById(id).value; return v !== '' ? +v : undefined; };
-  const payload = {};
-  const fields = {
-    calories: num('st-calories'), protein:  num('st-protein'),
-    carbs:    num('st-carbs'),    fat:      num('st-fat'),
-    fiber:    num('st-fiber'),    breakfastCal: num('st-breakfast'),
-    lunchCal: num('st-lunch'),   dinnerCal:    num('st-dinner'),
+  // Always send all 8 fields — empty inputs become 0 so existing values aren't zeroed silently
+  const num = id => { const v = document.getElementById(id).value; return v !== '' ? +v : 0; };
+  const payload = {
+    calories:     num('st-calories'),
+    protein:      num('st-protein'),
+    carbs:        num('st-carbs'),
+    fat:          num('st-fat'),
+    fiber:        num('st-fiber'),
+    breakfastCal: num('st-breakfast'),
+    lunchCal:     num('st-lunch'),
+    dinnerCal:    num('st-dinner'),
   };
-  Object.entries(fields).forEach(([k, v]) => { if (v !== undefined) payload[k] = v; });
+
+  const errEl = document.getElementById('settings-error');
+  if (errEl) errEl.style.display = 'none';
 
   const btn = document.getElementById('settings-save-btn');
   btn.disabled = true;
@@ -1620,7 +1735,10 @@ async function saveTargetsForm() {
   } catch {
     btn.textContent = 'Save Targets';
     btn.disabled = false;
-    showBanner('Could not save targets — please try again', null);
+    if (errEl) {
+      errEl.textContent = 'Could not save targets — please try again';
+      errEl.style.display = 'block';
+    }
   }
 }
 
