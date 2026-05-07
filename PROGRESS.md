@@ -10,6 +10,10 @@
 - Session 6 — History, Export & Suggestions: export button + `exportMealLog()` + `isExportQuery()`; `clearChat()` confirmation dialog; `showConfirm()`/`hideConfirm()`/`confirmOk()` modal
 - Session 7 — Photo Parsing: `photoIncludedInMessage` flag; `notes="logged from photo"` auto-injected; `isLowConfidence()` detector; `showPhotoEditCard()` editable inline card; `confirmPhotoEdit()` reads edited values
 - Session 8 — Full UAT Run: 43 Playwright test cases covering all 37 UAT scenarios — 0 failures; 1 test-assertion fix (null class check on `#error-banner`); zero bugs found in `index.html`; suite committed as `tests/uat.test.js` + `tests/helpers.js` + `playwright.config.js`
+- **Fix Branch (branch: fix/ui-and-chat-response, 2026-05-07/08)** — post-v1.0 bug fixes + UI alignment found during first real-device test:
+  - Commit 1 (692ea0a): chat `data.reply` fix; `data.error` check; avatar → pink `#e65bac`; download button removed from header; 3 suggestion chips in empty state; quick-action pill bar (📷 Photo / ☰ Templates / 📊 Today's Stats); `sendSuggestion()` + `quickAction()`
+  - Commit 2 (11290a1): `getStats` error handling (`stats.error` checked before rendering); `buildSystemPromptFull` checks `tpl.error`; AbortController + ■ Stop button; `setTyping()` toggles stop/send; `pendingAction` path uses try-finally; `executeAction` keeps typing during post-action getStats; `updateTemplate` shows refreshed list immediately; `white-space:normal` on `.stats-card`; login logo → pink; console.log at key API calls
+  - Commit 3 (a6c1e9d): full settings screen — account card, daily targets form (pre-fills from getStats, saves via setTargets), export CSV button moved from header to settings, sign-out clears session + history
 
 ## UAT tests passing
 - F-1.1-T · Login screen loads, Google button visible, no app content behind it
@@ -57,17 +61,29 @@
 - ERR-4-T · validateUser returns config_error → "App configuration error — please contact the owner"
 
 ## UAT tests still failing
-- None
+- None (on main). Fix branch adds new behaviour — see below.
+
+## UAT tests added / changed in fix branch
+- **UI-1-T** (new): empty state shows 3 vertical suggestion chips; clicking one sends the message
+- **UI-2-T** (new): quick-action bar always visible; 📷 triggers file picker, ☰ sends "Show my templates", 📊 sends "Show today's stats"
+- **UI-3-T** (new): settings screen opens on ⚙ tap; targets form pre-fills from API; Save Targets calls setTargets; Sign Out clears session
+- **UI-4-T** (new): ■ Stop button appears while AI is thinking; clicking it cancels the request and re-enables input
+- **ERR-1-T** (updated): now also handles `data.error` from Apps Script — correct error text shown, not always "AI is unreachable"
+- **F-4.x-T** (updated): stats card only rendered when `hasStats` is true (targets + consumed both present); no more empty 0/0 cards
+- **F-3.3-T / F-3.5-T** (updated): after `updateTemplate` success the refreshed template list is shown immediately in chat
 
 ## What the next session needs to do
-- **Deploy to production**: replace `GOOGLE_CLIENT_ID` placeholder with a real OAuth 2.0 client ID from Google Cloud Console and host `index.html` on a public URL (e.g. GitHub Pages or Firebase Hosting)
-- **Strip test hooks** from `index.html` before production: remove all `window.__mock*`, `window.__testLogin`, `window.__apiCallLog` etc.
-- **Verify end-to-end on device**: open the hosted URL on a real iPhone (Safari) or Android, log in with the real Google account, log a meal, check it appears in Google Sheets
+- **Merge fix branch → main** after device testing confirms all 6 fixes work end-to-end
+- **Remove debug console.log calls** added in fix branch before merge (search for `[chat]`, `[getStats]`, `[buildSystemPrompt]`, `[executeAction]`, `[updateTemplate]`)
+- **Run full Playwright UAT suite** against fix branch; update `tests/uat.test.js` to cover the 4 new UI-x-T scenarios
+- **Deploy to production**: host on GitHub Pages or Firebase Hosting; set real `GOOGLE_CLIENT_ID`; strip test hooks
 
 ## Known issues / decisions
-- `GOOGLE_CLIENT_ID` is still a placeholder — real Google sign-in requires an OAuth 2.0 client ID configured in Google Cloud Console (Authorised JavaScript origins must include the hosted URL)
-- Service worker registered via Blob URL — works in Chrome/Chromium; scope is limited to the origin; SW intercepts only Apps Script fetches as network fallback, not asset caching
+- `GOOGLE_CLIENT_ID` is still a placeholder — real Google sign-in requires an OAuth 2.0 client ID from Google Cloud Console (Authorised JavaScript origins must include the hosted URL)
+- Service worker registered via Blob URL — works in Chrome/Chromium; SW intercepts only Apps Script fetches as network fallback, not asset caching
 - Test hooks intentionally left in for now — must be removed before production deployment
 - `parseClaudeResponse` uses a balanced-brace parser with string-escape awareness + code-block fallback; handles nested payloads safely
-- Photo button queues one image per send; base64 image is NOT persisted to localStorage chat history (only text is stored)
+- Photo button queues one image per send; base64 image is NOT persisted to localStorage chat history (only text stored)
 - Low-confidence photo edit card stays in chat history after save — renders again on reload but is inert (no pending action attached)
+- **Fix branch only**: 6 `console.log` calls left in for debugging — remove before merging to main
+- **Fix branch only**: settings screen `saveTargetsForm` checks `result.ok || result.success` — confirm Apps Script returns one of these fields on success
