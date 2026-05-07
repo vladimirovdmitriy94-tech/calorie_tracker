@@ -8,6 +8,7 @@
 - Session 4 — Targets: `setTargets` pending action flow added to `executeAction`; `isTargetsQuery()` detects "show my current targets" / "what are my macro goals"; `renderTargetsCard()` displays targets-only readable card; targets query intercept added to `sendMsg`; `__mockSetTargets` test hook added; system prompt updated with setTargets field names
 - Session 5 — Edit & Delete: `deleteMeal` and `updateMeal` pending action flows added to `executeAction`; not-found handling for deleteMeal shows "No [mealType] logged today to delete" friendly message; distinct confirm messages per action type ("Meal deleted." / "Meal updated."); stats refresh after delete/edit; `__mockDeleteMeal` and `__mockUpdateMeal` test hooks added; system prompt updated with deleteMeal/updateMeal rules
 - Session 6 — History, Export & Suggestions: export button added to header; `exportMealLog()` + `isExportQuery()` added; chat "export my meal log" intercept triggers CSV download; `clearChat()` now shows confirmation dialog ("Clear chat history? This won't affect your meal data.") before clearing; `showConfirm()`/`hideConfirm()`/`confirmOk()` modal added; `__mockExportData` test hook added
+- Session 7 — Photo Parsing: `photoIncludedInMessage` flag tracks when photo is sent; `notes="logged from photo"` auto-injected into logMeal payload; `isLowConfidence()` detects uncertainty phrases; `showPhotoEditCard()` renders editable inline card (pe-name, pe-calories, pe-protein, pe-fat, pe-carbs) when low confidence detected; `confirmPhotoEdit()` reads edited values and executes logMeal; system prompt updated with photo analysis rules; `__setPendingPhoto` + `__showPhotoEditCard` test hooks added
 
 ## UAT tests passing
 - F-1.1-T: Login screen loads, Google button visible, no app content behind it
@@ -48,16 +49,21 @@
 - F-7.1-T: "suggest a meal with chicken and eggs" → 3 suggestions each with kcal count, no raw JSON
 - F-7.2-T: "suggest something under 500 kcal for dinner" → 3 options all ≤ 500 kcal (380, 420, 350)
 - F-7.3-T: "I need a high protein low fat meal" → 3 options all protein > 30g and fat < 10g
+- F-6.1-T: upload food photo → estimate shown → confirm → logMeal called with notes="logged from photo"
+- F-6.2-T: product photo → nutritional info shown, serving size question asked, no raw JSON
+- F-6.3-T: low-confidence photo → "not fully sure" text + editable card shown, edited values saved
+- F-6.4-T: photo confirmation → mealType set (inferred), notes="logged from photo" in payload
+- ERR-3-T: covered by F-6.3-T
 
 ## UAT tests still failing
 - None
 
 ## What the next session needs to do
-- Session 7 — Photo Parsing: photo button → file input → base64 image block in messages array; low-confidence flag → editable fields; logMeal with notes="logged from photo" (F-6.1-T, F-6.3-T, F-6.4-T)
+- Session 8 — Full UAT Run: run all 37 UAT tests (F-1.x through F-9.x + ERR-x) using Playwright, fix all failures, commit as v1.0
 
 ## Known issues / decisions
 - Service worker registered via Blob URL — works in Chrome; scope is limited; SW intercepts only Apps Script fetches as network fallback, not asset caching
 - `GOOGLE_CLIENT_ID` is still a placeholder; real Google sign-in requires an OAuth 2.0 client ID configured in Google Cloud Console
-- Test hooks (`__testLogin`, `__setSession`, `__mockChatFail`, `__mockLogMealFail`, `__mockStats`, `__mockTemplate`, `__mockUpdateTemplate`, `__mockLogMeal`, `__mockDeleteMeal`, `__mockUpdateMeal`, `__mockChatResponse`, `__mockExportData`, `__apiCallLog`, `__setPendingAction`) are intentionally left in; remove before production
+- Test hooks (`__testLogin`, `__setSession`, `__mockChatFail`, `__mockLogMealFail`, `__mockStats`, `__mockTemplate`, `__mockUpdateTemplate`, `__mockLogMeal`, `__mockDeleteMeal`, `__mockUpdateMeal`, `__mockChatResponse`, `__mockExportData`, `__apiCallLog`, `__setPendingAction`, `__setPendingPhoto`, `__showPhotoEditCard`) are intentionally left in; remove before production
 - `parseClaudeResponse` now uses a balanced-brace parser with string-escape awareness + code-block fallback; handles nested payloads safely
 - Photo button queues one image per send; base64 image is not persisted to localStorage chat history (only text is stored)

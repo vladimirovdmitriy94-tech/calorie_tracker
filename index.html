@@ -299,6 +299,39 @@ body {
 }
 .confirm-btn.cancel { background: var(--bg-deep); color: var(--text-mid); }
 .confirm-btn.danger { background: var(--red); color: #fff; }
+
+/* ── photo edit card ── */
+.photo-edit-card {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  animation: fadeUp 0.25s ease;
+}
+.photo-edit-title {
+  font-size: 12px; font-weight: 600; color: var(--text-mid);
+  text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px;
+}
+.photo-edit-label {
+  display: block; font-size: 11px; font-weight: 500;
+  color: var(--text-mid); margin-bottom: 3px;
+}
+.photo-edit-input {
+  width: 100%; height: 36px; border: 1px solid var(--border);
+  border-radius: 8px; padding: 0 10px; font-size: 13px;
+  font-family: inherit; color: var(--text); background: var(--bg);
+  outline: none; box-sizing: border-box;
+}
+.photo-edit-input:focus { border-color: var(--accent); }
+.photo-edit-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 8px; margin-bottom: 10px;
+}
+.photo-edit-btn {
+  width: 100%; height: 40px; border-radius: 10px; border: none;
+  background: var(--accent); color: #fff; font-size: 13px;
+  font-weight: 600; cursor: pointer; font-family: inherit;
+}
 </style>
 </head>
 <body>
@@ -425,10 +458,11 @@ const HISTORY_KEY = "ct_chat_history";
 const MAX_MSGS    = 100;
 
 // ── State ────────────────────────────────────────────────────────────────────────
-let chatMsgs      = [];
-let pendingAction = null;   // { action, payload } awaiting user confirmation
-let pendingPhoto  = null;   // { data, media_type } queued for next send
-let retryCallback = null;   // function called by Retry button
+let chatMsgs             = [];
+let pendingAction        = null;   // { action, payload } awaiting user confirmation
+let pendingPhoto         = null;   // { data, media_type } queued for next send
+let retryCallback        = null;   // function called by Retry button
+let photoIncludedInMessage = false; // true when last sendMsg included a photo
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────
 function localDateString() {
@@ -662,7 +696,8 @@ RULES:
 - Template keyword/mealType search with no matches: respond with exactly "No saved templates found for that search"
 - setTargets: when user asks to set/update nutrition targets, extract fields (calories, protein, fat, carbs, fiber, breakfastCal, lunchCal, dinnerCal) and confirm first. Action payload uses those field names exactly.
 - deleteMeal: when user asks to delete a meal, find it in TODAY's log by mealType. Show the meal name and kcal to confirm ("Will delete: [name], [kcal] kcal. Confirm?"). If the mealType is NOT in TODAY's log, respond exactly: "No [mealType] logged today to delete". Payload: {mealType} or {id}.
-- updateMeal: when user asks to edit/change a meal, recalculate the macros for the changed ingredients and show updated values before confirming. Payload: {id, name?, ingredients?, calories?, protein?, fat?, carbs?, notes?}. Always confirm before action JSON.`;
+- updateMeal: when user asks to edit/change a meal, recalculate the macros for the changed ingredients and show updated values before confirming. Payload: {id, name?, ingredients?, calories?, protein?, fat?, carbs?, notes?}. Always confirm before action JSON.
+- Photo analysis: when the user sends a food or product photo, describe ingredients and estimate calories+macros. Always set notes="logged from photo" in any logMeal action payload. If portion sizes are unclear or the image is blurry, explicitly say "I'm not fully sure about the portions" in your text response and present all values as estimates for the user to review.`;
 }
 
 // ── Error banner ──────────────────────────────────────────────────────────────────
@@ -749,6 +784,53 @@ async function executeAction(action, payload) {
     const a = action, p = payload;
     showBanner("Meal estimated but couldn't be saved — tap to retry", () => executeAction(a, p));
   }
+}
+
+// ── Photo helpers ─────────────────────────────────────────────────────────────────
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function isLowConfidence(text) {
+  return /not (fully |completely )?(sure|certain|confident)|i('m| am) (not|unsure)|hard to (tell|see)|unclear|blurry|might be|could be|approximately|roughly|uncertain/i.test(text);
+}
+
+function showPhotoEditCard(payload) {
+  const html = `<div class="photo-edit-card" id="photo-edit-card">
+<div class="photo-edit-title">Review &amp; Adjust Estimates</div>
+<div style="margin-bottom:8px">
+  <label class="photo-edit-label">Meal Name</label>
+  <input id="pe-name" class="photo-edit-input" value="${escapeHtml(payload.name||'')}" placeholder="Meal name"/>
+</div>
+<div class="photo-edit-grid">
+  <div><label class="photo-edit-label">Calories (kcal)</label><input id="pe-calories" class="photo-edit-input" type="number" value="${payload.calories||0}"/></div>
+  <div><label class="photo-edit-label">Protein (g)</label><input id="pe-protein" class="photo-edit-input" type="number" value="${payload.protein||0}"/></div>
+  <div><label class="photo-edit-label">Fat (g)</label><input id="pe-fat" class="photo-edit-input" type="number" value="${payload.fat||0}"/></div>
+  <div><label class="photo-edit-label">Carbs (g)</label><input id="pe-carbs" class="photo-edit-input" type="number" value="${payload.carbs||0}"/></div>
+</div>
+<button class="photo-edit-btn" onclick="confirmPhotoEdit()">Save to Log</button>
+</div>`;
+  const aiMsg = { role: 'ai', content: html, html: true, time: nowTime() };
+  chatMsgs.push(aiMsg);
+  saveHistory();
+  pushMsg(aiMsg);
+}
+
+function confirmPhotoEdit() {
+  if (!pendingAction) return;
+  const get   = id => { const el = document.getElementById(id); return el ? el.value : null; };
+  const toNum = (v, fb) => (v !== null && v !== '') ? +v : fb;
+  const payload = {
+    ...pendingAction.payload,
+    name:     (get('pe-name') ?? pendingAction.payload.name),
+    calories: toNum(get('pe-calories'), pendingAction.payload.calories),
+    protein:  toNum(get('pe-protein'),  pendingAction.payload.protein),
+    fat:      toNum(get('pe-fat'),      pendingAction.payload.fat),
+    carbs:    toNum(get('pe-carbs'),    pendingAction.payload.carbs),
+  };
+  pendingAction = null;
+  document.getElementById('photo-edit-card')?.closest('.msg-row')?.remove();
+  executeAction('logMeal', payload);
 }
 
 // ── Photo ─────────────────────────────────────────────────────────────────────────
@@ -1022,12 +1104,14 @@ async function sendMsg() {
   }
 
   // ── Build message content (text + optional photo) ─────────────────────────────
+  photoIncludedInMessage = false;
   let msgContent = text;
   if (pendingPhoto) {
     msgContent = [
       { type: 'text', text },
       { type: 'image', source: { type: 'base64', media_type: pendingPhoto.media_type, data: pendingPhoto.data } }
     ];
+    photoIncludedInMessage = true;
     pendingPhoto = null;
     document.getElementById('btn-photo').classList.remove('has-photo');
   }
@@ -1051,7 +1135,13 @@ async function sendMsg() {
     if (!rawText) throw new Error('empty response');
 
     const parsed = parseClaudeResponse(rawText);
-    if (parsed.action) pendingAction = { action: parsed.action, payload: parsed.payload };
+    if (parsed.action) {
+      // Guarantee notes="logged from photo" when a photo was sent
+      if (parsed.action === 'logMeal' && photoIncludedInMessage && !parsed.payload.notes) {
+        parsed.payload.notes = 'logged from photo';
+      }
+      pendingAction = { action: parsed.action, payload: parsed.payload };
+    }
 
     // Commit both messages only on success
     const userMsg = { role: 'user', content: text, time };
@@ -1062,6 +1152,11 @@ async function sendMsg() {
     document.getElementById('chat-empty').style.display = 'none';
     pushMsg(userMsg);
     pushMsg(aiMsg);
+
+    // Show editable card for low-confidence photo responses
+    if (photoIncludedInMessage && pendingAction?.action === 'logMeal' && isLowConfidence(rawText)) {
+      showPhotoEditCard(pendingAction.payload);
+    }
 
     input.value = '';
     onInputChange();
@@ -1192,6 +1287,11 @@ window.__apiCallLog         = [];
 window.__clearApiLog        = ()            => { window.__apiCallLog = []; };
 window.__setPendingAction   = (action, payload) => { pendingAction = { action, payload }; };
 Object.defineProperty(window, '__pendingAction', { get: () => pendingAction });
+window.__setPendingPhoto    = (data, mediaType) => {
+  pendingPhoto = { data: data || 'dGVzdA==', media_type: mediaType || 'image/jpeg' };
+  document.getElementById('btn-photo').classList.add('has-photo');
+};
+window.__showPhotoEditCard  = (payload) => showPhotoEditCard(payload);
 
 // ── Boot ──────────────────────────────────────────────────────────────────────────
 (function boot() {
