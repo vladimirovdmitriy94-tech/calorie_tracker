@@ -60,10 +60,10 @@ body {
 .login-logo { text-align: center; margin-bottom: 48px; animation: fadeUp 0.5s ease; }
 .login-logo-icon {
   width: 72px; height: 72px; border-radius: 20px;
-  background: var(--accent);
+  background: var(--avatar-color);
   display: flex; align-items: center; justify-content: center;
   margin: 0 auto 16px;
-  box-shadow: 0 8px 24px rgba(61,139,94,0.25);
+  box-shadow: 0 8px 24px rgba(230,91,172,0.25);
   font-size: 32px;
 }
 .login-logo h1 { font-size: 24px; font-weight: 700; color: var(--text); letter-spacing: -0.5px; }
@@ -224,6 +224,16 @@ body {
 }
 #btn-send.active { background: var(--accent); color: #fff; cursor: pointer; }
 
+#btn-stop {
+  display: none;
+  width: 36px; height: 36px; border-radius: 50%;
+  border: none; background: var(--red); color: #fff;
+  align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0; font-size: 13px; font-weight: 700;
+  font-family: inherit;
+}
+#btn-stop:hover { opacity: 0.85; }
+
 /* photo button */
 #btn-photo {
   width: 30px; height: 30px; border: none; background: transparent;
@@ -256,8 +266,8 @@ body {
 }
 #error-banner-retry:hover { opacity: 0.85; }
 
-/* stats card */
-.stats-card { width: 100%; font-size: 13px; }
+/* stats card — reset white-space inherited from .bubble */
+.stats-card { width: 100%; font-size: 13px; white-space: normal; }
 .stats-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 12px; }
 .stat-row { margin-bottom: 10px; }
 .stat-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; gap: 8px; }
@@ -468,6 +478,7 @@ body {
           <polygon points="22 2 15 22 11 13 2 9 22 2"/>
         </svg>
       </button>
+      <button id="btn-stop" onclick="stopTyping()" title="Stop">■</button>
     </div>
   </div>
 </div>
@@ -499,6 +510,7 @@ let pendingAction        = null;   // { action, payload } awaiting user confirma
 let pendingPhoto         = null;   // { data, media_type } queued for next send
 let retryCallback        = null;   // function called by Retry button
 let photoIncludedInMessage = false; // true when last sendMsg included a photo
+let currentAbortController = null; // AbortController for in-flight chat fetch
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────
 function localDateString() {
@@ -512,7 +524,7 @@ function getSession() {
 function saveSession(s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
 function clearSession()  { localStorage.removeItem(SESSION_KEY); }
 
-async function apiFetch(action, body = {}) {
+async function apiFetch(action, body = {}, signal = undefined) {
   // Always log every call (before mock short-circuits)
   window.__lastApiCall = { action, body };
   if (!window.__apiCallLog) window.__apiCallLog = [];
@@ -529,10 +541,12 @@ async function apiFetch(action, body = {}) {
   if (action === 'deleteMeal'     && window.__mockDeleteMeal != null) return window.__mockDeleteMeal;
   if (action === 'updateMeal'     && window.__mockUpdateMeal != null) return window.__mockUpdateMeal;
   if (action === 'exportData'     && window.__mockExportData != null) return window.__mockExportData;
-  const res = await fetch(API_URL, {
+  const fetchOpts = {
     method: "POST",
     body: JSON.stringify({ ...body, action, userEmail: getSession()?.email, date: localDateString() })
-  });
+  };
+  if (signal) fetchOpts.signal = signal;
+  const res = await fetch(API_URL, fetchOpts);
   return res.json();
 }
 
@@ -684,10 +698,15 @@ function renderTargetsCard(stats) {
 async function buildSystemPromptFull() {
   const s = getSession();
   let stats = {}, templates = [];
-  try { stats = await apiFetch('getStats'); } catch {}
+  try {
+    const s = await apiFetch('getStats');
+    console.log('[buildSystemPrompt] getStats:', s);
+    if (!s.error) stats = s;
+  } catch {}
   try {
     const tpl = await apiFetch('getTemplate', {});
-    templates = tpl.templates || (Array.isArray(tpl) ? tpl : []);
+    console.log('[buildSystemPrompt] getTemplate:', tpl);
+    if (!tpl.error) templates = tpl.templates || (Array.isArray(tpl) ? tpl : []);
   } catch {}
 
   const targets     = stats.targets || {};
@@ -774,36 +793,63 @@ async function executeAction(action, payload) {
 
     if (action === 'updateTemplate') {
       const name = payload.templateName || 'Template';
-      const aiMsg = { role: 'ai', content: `"${name}" template saved!`, time: nowTime() };
+      const aiMsg = { role: 'ai', content: `✅ "${name}" template saved!`, time: nowTime() };
       chatMsgs.push(aiMsg);
       saveHistory();
       pushMsg(aiMsg);
+      // Fetch and show updated template list immediately
+      try {
+        setTyping(true);
+        const tplRes = await apiFetch('getTemplate', {});
+        console.log('[updateTemplate] refreshed templates:', tplRes);
+        setTyping(false);
+        if (!tplRes.error) {
+          const tpls = tplRes.templates || (Array.isArray(tplRes) ? tplRes : []);
+          if (tpls.length > 0) {
+            const listText = 'Your saved templates:\n' + tpls.map(t =>
+              `• ${t.templateName}: ${t.calories} kcal | P:${t.protein}g F:${t.fat}g C:${t.carbs}g`
+            ).join('\n');
+            const listMsg = { role: 'ai', content: listText, time: nowTime() };
+            chatMsgs.push(listMsg);
+            saveHistory();
+            pushMsg(listMsg);
+          }
+        }
+      } catch { setTyping(false); }
       return;
     }
 
     if (action === 'setTargets') {
-      const aiMsg = { role: 'ai', content: 'Targets updated! Your new daily targets have been saved.', time: nowTime() };
+      const aiMsg = { role: 'ai', content: '✅ Targets updated! Your new daily targets have been saved.', time: nowTime() };
       chatMsgs.push(aiMsg);
       saveHistory();
       pushMsg(aiMsg);
       return;
     }
 
-    // logMeal / deleteMeal / updateMeal
+    // logMeal / deleteMeal / updateMeal — fetch fresh stats for confirmation
+    setTyping(true);
     let stats = {};
-    try { stats = await apiFetch('getStats'); } catch {}
+    try {
+      const s = await apiFetch('getStats');
+      console.log('[executeAction] post-action getStats:', s);
+      if (!s.error) stats = s;
+    } catch {}
+    setTyping(false);
+
     const consumed  = stats.consumed || 0;
     const targets   = stats.targets  || {};
     const remaining = (targets.calories || 0) - consumed;
+    const hasStats  = !!(stats.consumed !== undefined && targets.calories);
 
     let confirmText;
     if (action === 'deleteMeal') {
-      confirmText = `Meal deleted.\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining`;
+      confirmText = `✅ Meal deleted.${hasStats ? `\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining` : ''}`;
     } else if (action === 'updateMeal') {
-      confirmText = `Meal updated.\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining`;
+      confirmText = `✅ Meal updated.${hasStats ? `\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining` : ''}`;
     } else {
       const idPart = result.id ? ` (ID: ${result.id})` : '';
-      confirmText = `Meal logged successfully!${idPart}\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining`;
+      confirmText = `✅ Meal logged!${idPart}${hasStats ? `\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining` : ''}`;
     }
 
     const aiMsg = { role: 'ai', content: confirmText, time: nowTime() };
@@ -811,10 +857,12 @@ async function executeAction(action, payload) {
     saveHistory();
     pushMsg(aiMsg);
 
-    const statsMsg = { role: 'ai', content: renderStatsCard(stats), html: true, time: nowTime() };
-    chatMsgs.push(statsMsg);
-    saveHistory();
-    pushMsg(statsMsg);
+    if (hasStats) {
+      const statsMsg = { role: 'ai', content: renderStatsCard(stats), html: true, time: nowTime() };
+      chatMsgs.push(statsMsg);
+      saveHistory();
+      pushMsg(statsMsg);
+    }
   } catch {
     setTyping(false);
     const a = action, p = payload;
@@ -1034,7 +1082,22 @@ function scrollBottom() {
 
 function setTyping(on) {
   document.getElementById('typing').classList.toggle('show', on);
+  const stop = document.getElementById('btn-stop');
+  const send = document.getElementById('btn-send');
+  if (stop) stop.style.display = on ? 'flex' : 'none';
+  if (send) send.style.display = on ? 'none' : 'flex';
   if (on) scrollBottom();
+}
+
+function stopTyping() {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+  setTyping(false);
+  const input = document.getElementById('msg-input');
+  input.disabled = false;
+  input.focus();
 }
 
 function onInputChange() {
@@ -1065,10 +1128,12 @@ async function sendMsg() {
       saveHistory();
       pushMsg(userMsg);
 
-      await executeAction(action, payload);
-
-      input.disabled = false;
-      input.focus();
+      try {
+        await executeAction(action, payload);
+      } finally {
+        input.disabled = false;
+        input.focus();
+      }
       return;
     }
     pendingAction = null;
@@ -1080,7 +1145,9 @@ async function sendMsg() {
     setTyping(true);
     try {
       const stats = await apiFetch('getStats');
+      console.log('[getStats] response:', stats);
       setTyping(false);
+      if (stats.error) throw new Error(stats.error);
       const userMsg  = { role: 'user', content: text, time };
       const statsMsg = { role: 'ai', content: renderStatsCard(stats), html: true, time: nowTime() };
       chatMsgs.push(userMsg, statsMsg);
@@ -1106,7 +1173,9 @@ async function sendMsg() {
     setTyping(true);
     try {
       const stats = await apiFetch('getStats');
+      console.log('[getStats/targets] response:', stats);
       setTyping(false);
+      if (stats.error) throw new Error(stats.error);
       const userMsg    = { role: 'user', content: text, time };
       const targetsMsg = { role: 'ai', content: renderTargetsCard(stats), html: true, time: nowTime() };
       chatMsgs.push(userMsg, targetsMsg);
@@ -1164,10 +1233,13 @@ async function sendMsg() {
       { role: 'user', content: msgContent }
     ];
 
-    const data = await apiFetch('chat', { messages: apiHistory, systemPrompt });
+    currentAbortController = new AbortController();
+    const data = await apiFetch('chat', { messages: apiHistory, systemPrompt }, currentAbortController.signal);
+    currentAbortController = null;
     setTyping(false);
 
     if (data.error) throw new Error(data.error);
+    console.log('[chat] API response:', data);
 
     const rawText = data.reply || data.response || data.content || data.text || '';
     if (!rawText) throw new Error('empty response');
@@ -1332,6 +1404,8 @@ window.__setPendingPhoto    = (data, mediaType) => {
 window.__showPhotoEditCard  = (payload) => showPhotoEditCard(payload);
 window.__sendSuggestion     = (text)    => sendSuggestion(text);
 window.__quickAction        = (id)      => quickAction(id);
+window.__stopTyping         = ()        => stopTyping();
+window.__getAbortController = ()        => currentAbortController;
 
 // ── Quick actions / suggestion chips ─────────────────────────────────────────────
 function sendSuggestion(text) {
