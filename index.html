@@ -254,6 +254,25 @@ body {
   font-family: inherit; flex-shrink: 0;
 }
 #error-banner-retry:hover { opacity: 0.85; }
+
+/* stats card */
+.stats-card { width: 100%; font-size: 13px; }
+.stats-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 12px; }
+.stat-row { margin-bottom: 10px; }
+.stat-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; gap: 8px; }
+.stat-name { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; }
+.stat-val  { font-size: 12px; color: var(--text-mid); text-align: right; }
+.stat-bar  { height: 6px; background: var(--bg-deep); border-radius: 3px; overflow: hidden; }
+.stat-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.stat-fill.cal  { background: var(--accent); }
+.stat-fill.prot { background: oklch(0.58 0.16 240); }
+.stat-fill.fat  { background: var(--amber); }
+.stat-fill.carb { background: oklch(0.68 0.16 55); }
+.stat-fill.over { background: var(--red) !important; }
+.meals-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
+.meal-chip { background: var(--bg-deep); border-radius: 10px; padding: 8px 10px; }
+.meal-chip-name { display: block; font-size: 12px; font-weight: 500; color: var(--text); }
+.meal-chip-cal  { display: block; font-size: 11px; color: var(--text-mid); margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -381,6 +400,7 @@ function clearSession()  { localStorage.removeItem(SESSION_KEY); }
 async function apiFetch(action, body = {}) {
   if (action === 'chat'    && window.__mockChatFail)    throw new Error('mocked chat failure');
   if (action === 'logMeal' && window.__mockLogMealFail) throw new Error('mocked logMeal failure');
+  if (action === 'getStats' && window.__mockStats)      return window.__mockStats;
   const res = await fetch(API_URL, {
     method: "POST",
     body: JSON.stringify({ ...body, action, userEmail: getSession()?.email, date: localDateString() })
@@ -413,6 +433,59 @@ function parseClaudeResponse(text) {
 
 function isAffirmative(t) {
   return /^(yes|y|sure|ok|okay|log it|go ahead|yep|yup|do it|confirm|correct|right|save|save it|sounds good|perfect|please|yeah)\b/i.test(t.trim());
+}
+
+function isStatsQuery(t) {
+  return /show.*(my\s+)?(stats|statistics|summary)|today.*(summary|stats)|how am i doing/i.test(t.trim());
+}
+
+function macroStatus(consumed, target) {
+  if (!target) return '';
+  const r = consumed / target;
+  if (r > 1)    return '🔴 Over target';
+  if (r >= 0.9) return '✅ On track';
+  return '⚠️ Slightly low';
+}
+
+function renderStatsCard(stats) {
+  const targets  = stats.targets  || {};
+  const meals    = stats.meals    || [];
+  const consumed = stats.consumed || 0;
+
+  let cProt = 0, cFat = 0, cCarb = 0;
+  const mealKcal = { breakfast: 0, lunch: 0, dinner: 0, snack: 0 };
+  meals.forEach(m => {
+    cProt += +(m.protein  || 0);
+    cFat  += +(m.fat      || 0);
+    cCarb += +(m.carbs    || 0);
+    const t = (m.mealType || '').toLowerCase();
+    if (t in mealKcal) mealKcal[t] += +(m.calories || 0);
+  });
+
+  const tCal  = targets.calories || 0;
+  const tProt = targets.protein  || 0;
+  const tFat  = targets.fat      || 0;
+  const tCarb = targets.carbs    || 0;
+
+  function pct(c, t) { return t ? Math.min(100, Math.round(c / t * 100)) : 0; }
+  function bar(c, t, cls) {
+    const w = pct(c, t); const over = t > 0 && c > t;
+    return `<div class="stat-bar"><div class="stat-fill ${cls}${over ? ' over' : ''}" style="width:${w}%"></div></div>`;
+  }
+
+  const mealEmoji = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍎' };
+  const mealChips = ['breakfast','lunch','dinner','snack'].map(t =>
+    `<div class="meal-chip"><span class="meal-chip-name">${mealEmoji[t]} ${t.charAt(0).toUpperCase()+t.slice(1)}</span><span class="meal-chip-cal">${mealKcal[t]} kcal</span></div>`
+  ).join('');
+
+  return `<div class="stats-card">
+<div class="stats-title">📊 Today's Stats</div>
+<div class="stat-row"><div class="stat-head"><span class="stat-name">Calories</span><span class="stat-val">${consumed} / ${tCal} kcal${tCal ? '  ' + macroStatus(consumed, tCal) : ''}</span></div>${bar(consumed, tCal, 'cal')}</div>
+<div class="stat-row"><div class="stat-head"><span class="stat-name">Protein</span><span class="stat-val">${cProt} / ${tProt}g${tProt ? '  ' + macroStatus(cProt, tProt) : ''}</span></div>${bar(cProt, tProt, 'prot')}</div>
+<div class="stat-row"><div class="stat-head"><span class="stat-name">Fat</span><span class="stat-val">${cFat} / ${tFat}g${tFat ? '  ' + macroStatus(cFat, tFat) : ''}</span></div>${bar(cFat, tFat, 'fat')}</div>
+<div class="stat-row"><div class="stat-head"><span class="stat-name">Carbs</span><span class="stat-val">${cCarb} / ${tCarb}g${tCarb ? '  ' + macroStatus(cCarb, tCarb) : ''}</span></div>${bar(cCarb, tCarb, 'carb')}</div>
+<div class="meals-row">${mealChips}</div>
+</div>`;
 }
 
 // ── System prompt with live stats ────────────────────────────────────────────────
@@ -487,6 +560,11 @@ async function executeAction(action, payload) {
     chatMsgs.push(aiMsg);
     saveHistory();
     pushMsg(aiMsg);
+
+    const statsMsg = { role: 'ai', content: renderStatsCard(stats), html: true, time: nowTime() };
+    chatMsgs.push(statsMsg);
+    saveHistory();
+    pushMsg(statsMsg);
   } catch {
     setTyping(false);
     const a = action, p = payload;
@@ -632,7 +710,7 @@ function buildMsgEl(msg) {
 
   const bubble = document.createElement('div');
   bubble.className = `bubble ${isUser ? 'user' : 'ai'}`;
-  bubble.textContent = msg.content;
+  if (msg.html) { bubble.innerHTML = msg.content; } else { bubble.textContent = msg.content; }
   inner.appendChild(bubble);
 
   if (msg.time) {
@@ -697,6 +775,32 @@ async function sendMsg() {
       return;
     }
     pendingAction = null;
+  }
+
+  // ── Stats query intercept ─────────────────────────────────────────────────────
+  if (isStatsQuery(text)) {
+    input.disabled = true;
+    setTyping(true);
+    try {
+      const stats = await apiFetch('getStats');
+      setTyping(false);
+      const userMsg  = { role: 'user', content: text, time };
+      const statsMsg = { role: 'ai', content: renderStatsCard(stats), html: true, time: nowTime() };
+      chatMsgs.push(userMsg, statsMsg);
+      saveHistory();
+      document.getElementById('chat-empty').style.display = 'none';
+      pushMsg(userMsg);
+      pushMsg(statsMsg);
+      input.value = '';
+      onInputChange();
+    } catch {
+      setTyping(false);
+      showBanner('AI is unreachable — please try again', () => sendMsg());
+    } finally {
+      input.disabled = false;
+      input.focus();
+    }
+    return;
   }
 
   // ── Build message content (text + optional photo) ─────────────────────────────
@@ -805,6 +909,7 @@ window.__testLogin       = (email, name) => processLogin(email, name);
 window.__setSession      = (s)           => saveSession(s);
 window.__mockChatFail    = false;
 window.__mockLogMealFail = false;
+window.__mockStats       = null;
 window.__setPendingAction = (action, payload) => { pendingAction = { action, payload }; };
 Object.defineProperty(window, '__pendingAction', { get: () => pendingAction });
 
