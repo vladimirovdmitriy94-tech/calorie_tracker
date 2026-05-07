@@ -14,6 +14,8 @@
   - Commit 1 (692ea0a): chat `data.reply` fix; `data.error` check; avatar → pink `#e65bac`; download button removed from header; 3 suggestion chips in empty state; quick-action pill bar (📷 Photo / ☰ Templates / 📊 Today's Stats); `sendSuggestion()` + `quickAction()`
   - Commit 2 (11290a1): `getStats` error handling (`stats.error` checked before rendering); `buildSystemPromptFull` checks `tpl.error`; AbortController + ■ Stop button; `setTyping()` toggles stop/send; `pendingAction` path uses try-finally; `executeAction` keeps typing during post-action getStats; `updateTemplate` shows refreshed list immediately; `white-space:normal` on `.stats-card`; login logo → pink; console.log at key API calls
   - Commit 3 (a6c1e9d): full settings screen — account card, daily targets form (pre-fills from getStats, saves via setTargets), export CSV button moved from header to settings, sign-out clears session + history
+  - Commit 4 (09e2e70): real-API compatibility + template rendering — `normalizeStats()` (maps `totals.calories → consumed`, TitleCase meal keys → camelCase), `normalizeTemplates()` (TitleCase template keys → camelCase), `isTemplatesQuery()` + `renderTemplatesCard()` styled card (bypasses Claude for template lists), `containsHtml()` fallback render; `executeAction` checks `success` AND `ok` (real API returns `{success:true}`); `saveTargetsForm` always sends all 8 fields (empty → 0) + inline `#settings-error`; system prompt now says "plain text only"; all 6 debug console.log removed; 12 new tests (UI-1..4, TPLR-1..3, NORM-1..4)
+  - Commit 5 (d7fe38a): **Apps Script date bug fix** — `dateOnly(val)` helper in api.gs handles Date objects from Sheets (was returning `"Fri May 08"` from `String(dateObj).substring(0,10)`, never matching `"yyyy-MM-dd"`); applied to every date filter/sort/upsert in getStats / setTargets / deleteMeal / getLog / exportData. **Root cause for issues**: settings empty + stats=0 + meals not appearing + setTargets duplicates. Confirmation message restructured to push immediately after API success ("✅ Done — Meal logged to today's log!") with kcal totals as separate follow-up. 7 new tests (CONFIRM-1..4, STG-1..3); UAT.md documented with all new sections.
 
 ## UAT tests passing
 - F-1.1-T · Login screen loads, Google button visible, no app content behind it
@@ -63,27 +65,32 @@
 ## UAT tests still failing
 - None (on main). Fix branch adds new behaviour — see below.
 
-## UAT tests added / changed in fix branch
+## UAT tests added / changed in fix branch (62 total, all passing)
 - **UI-1-T** (new): empty state shows 3 vertical suggestion chips; clicking one sends the message
 - **UI-2-T** (new): quick-action bar always visible; 📷 triggers file picker, ☰ sends "Show my templates", 📊 sends "Show today's stats"
-- **UI-3-T** (new): settings screen opens on ⚙ tap; targets form pre-fills from API; Save Targets calls setTargets; Sign Out clears session
+- **UI-3-T** / **UI-3-T B** (new): settings screen opens; targets form pre-fills from getStats; Save Targets calls setTargets; ✓ Saved on success; inline `#settings-error` on failure (not in chat banner)
 - **UI-4-T** (new): ■ Stop button appears while AI is thinking; clicking it cancels the request and re-enables input
+- **TPLR-1..3-T** (new): "show my templates" → styled `.template-card` rendered (not raw HTML divs from Claude); template intercept bypasses Claude
+- **NORM-1..4-T** (new): real-API stats format (`totals.calories`, TitleCase meal keys) handled by `normalizeStats`; real-API deleteMeal `{success:true}` (no `ok`) shows correct confirmation; TitleCase template keys handled by `normalizeTemplates`
+- **CONFIRM-1..4-T** (new): logMeal confirmation appears immediately after API success (not waiting on stats refresh); shown even when post-action getStats fails; real-API `{success:true, id, date}` triggers confirmation
+- **STG-1..3-T** (new): settings pre-fills all 8 fields from real getStats; setTargets always sends all 8 fields; stats card shows User_Targets row even with no meals
 - **ERR-1-T** (updated): now also handles `data.error` from Apps Script — correct error text shown, not always "AI is unreachable"
 - **F-4.x-T** (updated): stats card only rendered when `hasStats` is true (targets + consumed both present); no more empty 0/0 cards
-- **F-3.3-T / F-3.5-T** (updated): after `updateTemplate` success the refreshed template list is shown immediately in chat
+- **F-3.3-T / F-3.5-T** (updated): after `updateTemplate` success the refreshed template list is shown immediately as styled card
+- **F-9.3-T** (updated): export button moved to settings screen — test opens settings first
 
 ## What the next session needs to do
-- **Merge fix branch → main** after device testing confirms all 6 fixes work end-to-end
-- **Remove debug console.log calls** added in fix branch before merge (search for `[chat]`, `[getStats]`, `[buildSystemPrompt]`, `[executeAction]`, `[updateTemplate]`)
-- **Run full Playwright UAT suite** against fix branch; update `tests/uat.test.js` to cover the 4 new UI-x-T scenarios
-- **Deploy to production**: host on GitHub Pages or Firebase Hosting; set real `GOOGLE_CLIENT_ID`; strip test hooks
+- **Redeploy api.gs** to Apps Script (New Deployment → Web App → "Anyone" access) so the `dateOnly()` server-side fix is live
+- **Merge fix branch → main** after redeploying api.gs and confirming end-to-end on device
+- **Strip test hooks** before production deployment (search for `window.__` test hooks in index.html)
+- **Deploy to production**: host on GitHub Pages or Firebase Hosting; the hosted URL must be added to OAuth client's "Authorized JavaScript origins"
 
 ## Known issues / decisions
-- `GOOGLE_CLIENT_ID` is still a placeholder — real Google sign-in requires an OAuth 2.0 client ID from Google Cloud Console (Authorised JavaScript origins must include the hosted URL)
+- `GOOGLE_CLIENT_ID` is set to the production OAuth client ID (`796361789204-qbjjlu0kve2is1jn5mkbfdnas1f4p10e`); the hosted URL must be added to "Authorized JavaScript origins" in Google Cloud Console before sign-in works
 - Service worker registered via Blob URL — works in Chrome/Chromium; SW intercepts only Apps Script fetches as network fallback, not asset caching
 - Test hooks intentionally left in for now — must be removed before production deployment
 - `parseClaudeResponse` uses a balanced-brace parser with string-escape awareness + code-block fallback; handles nested payloads safely
 - Photo button queues one image per send; base64 image is NOT persisted to localStorage chat history (only text stored)
 - Low-confidence photo edit card stays in chat history after save — renders again on reload but is inert (no pending action attached)
-- **Fix branch only**: 6 `console.log` calls left in for debugging — remove before merging to main
-- **Fix branch only**: settings screen `saveTargetsForm` checks `result.ok || result.success` — confirm Apps Script returns one of these fields on success
+- `apiFetch` mock layer is in place for tests — production builds should strip it (along with all `window.__*` hooks)
+- `api.gs` `dateOnly(val)` helper is the single point of truth for date comparisons; any new endpoint using `Meals_Log.Date` or `User_Targets.DateFrom` must use it
