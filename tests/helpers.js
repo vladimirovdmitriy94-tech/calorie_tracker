@@ -28,6 +28,8 @@ async function loginAs(page, email = 'owner@gmail.com', name = 'Owner') {
   }, [email, name, 'ct_session']);
   await page.reload();
   await page.waitForSelector('#chat-screen:not(.hidden)', { timeout: 5000 });
+  // Default to empty template list so tests don't hit the real API for getTemplate
+  await page.evaluate(() => { window.__mockTemplate = { found: false, templates: [], count: 0 }; });
 }
 
 /** Set a mock stats response via the test hook */

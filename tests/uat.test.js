@@ -854,42 +854,23 @@ test('F-9.2-T · Chat history persists across reload', async ({ page }) => {
   await waitForAiText(page, 'Sure, how can I help?');
 });
 
-test('F-9.3-T · Export → Blob URL created, download triggered', async ({ page }) => {
+test('F-9.3-T · Export → exportData API called, download triggered', async ({ page }) => {
   await loginAs(page);
+  await setMockStats(page);
   await page.evaluate(() => {
     window.__mockExportData = {
       csv: 'Date,MealType,Name,Ingredients,Calories,Protein,Fat,Carbs,Fiber,Notes\n2026-05-07,lunch,Chicken Rice,150g chicken rice,620,45,12,80,0,'
     };
   });
+  await clearApiLog(page);
 
-  // Track download via anchor click
-  let downloadHref = null;
-  await page.exposeFunction('__onAnchorCreated', (href, download) => {
-    downloadHref = href;
-  });
-
-  await page.evaluate(() => {
-    const orig = document.createElement.bind(document);
-    document.createElement = (tag) => {
-      const el = orig(tag);
-      if (tag === 'a') {
-        const origClick = el.click.bind(el);
-        el.click = () => { window.__onAnchorCreated(el.href, el.download); origClick(); };
-      }
-      return el;
-    };
-  });
+  // Export button is now in settings screen — open settings first
+  await page.locator('[onclick="openSettings()"]').click();
+  await page.waitForSelector('#settings-screen:not(.hidden)', { timeout: 3000 });
 
   await page.locator('[onclick="exportMealLog()"]').click();
   await page.waitForTimeout(1500);
 
-  // Verify via chat export command as fallback
-  if (!downloadHref) {
-    await page.evaluate(() => { window.__mockExportData = { csv: 'Date,MealType,Name\n2026-05-07,lunch,Chicken' }; });
-    await setMockStats(page);
-    await sendMessage(page, 'export my meal log');
-    await page.waitForTimeout(1500);
-  }
   // Key: exportData API was called
   const called = await wasApiCalled(page, 'exportData');
   expect(called).toBe(true);
@@ -952,4 +933,298 @@ test('ERR-4-T · Config error on validateUser → "App configuration error" show
   await expect(page.locator('#login-alert')).toHaveClass(/show/, { timeout: 5000 });
   const msg = await page.locator('#alert-msg').textContent();
   expect(msg).toContain('App configuration error');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Block UI — UI enhancements (fix branch)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('UI-1-T · Empty state shows 3 suggestion chips; clicking one sends the message', async ({ page }) => {
+  await loginAs(page);
+  await setMockStats(page);
+  await setMockChat(page, 'Sure, logging scrambled eggs for breakfast!');
+
+  await expect(page.locator('#chat-empty')).toBeVisible();
+  const chips = await page.locator('.chip-btn').all();
+  expect(chips.length).toBe(3);
+
+  // Click the first chip → should fill input and send
+  await chips[0].click();
+  // Chat-empty should disappear after send
+  await page.waitForFunction(() => document.querySelector('#chat-empty').style.display === 'none', { timeout: 5000 });
+  // A user bubble should exist
+  const userBubbles = await page.locator('.bubble.user').count();
+  expect(userBubbles).toBeGreaterThanOrEqual(1);
+});
+
+test('UI-2-T · Quick-action bar: ☰ sends "Show my templates", 📊 sends today\'s stats', async ({ page }) => {
+  await loginAs(page);
+  await setMockStats(page, MOCK_STATS);
+  await page.evaluate(() => {
+    window.__mockTemplate = { templates: [{ templateName: 'breakfast', mealType: 'breakfast', calories: 420, protein: 18, fat: 12, carbs: 58, ingredients: 'oats, milk' }] };
+  });
+
+  // Click Templates quick-action → intercepted, shows template card
+  await page.locator('.qa-btn').filter({ hasText: 'Templates' }).click();
+  await page.waitForSelector('.templates-list', { timeout: 5000 });
+  await expect(page.locator('.templates-list')).toBeVisible();
+
+  // Click Stats quick-action → intercepted, shows stats card
+  await page.locator('.qa-btn').filter({ hasText: "Stats" }).click();
+  await page.waitForSelector('.stats-card', { timeout: 5000 });
+  await expect(page.locator('.stats-card').last()).toBeVisible();
+});
+
+test('UI-3-T · Settings: open → targets pre-fill → save → ✓ Saved shown, setTargets called', async ({ page }) => {
+  await loginAs(page);
+  await page.evaluate(() => {
+    window.__mockStats = {
+      consumed: 1400,
+      targets: { calories: 2200, protein: 150, fat: 70, carbs: 250, breakfastCal: 500, lunchCal: 700, dinnerCal: 700 },
+      meals: []
+    };
+    window.__mockSetTargets = { success: true };
+  });
+
+  // Open settings
+  await page.locator('[onclick="openSettings()"]').click();
+  await page.waitForSelector('#settings-screen:not(.hidden)', { timeout: 3000 });
+
+  // Targets should be pre-filled from getStats
+  await page.waitForFunction(() => document.getElementById('st-calories').value !== '', { timeout: 3000 });
+  expect(await page.locator('#st-calories').inputValue()).toBe('2200');
+  expect(await page.locator('#st-protein').inputValue()).toBe('150');
+
+  // Change a value and save
+  await page.locator('#st-calories').fill('2400');
+  await clearApiLog(page);
+  await page.locator('#settings-save-btn').click();
+
+  // Button should show ✓ Saved!
+  await page.waitForFunction(() => document.getElementById('settings-save-btn').textContent.includes('Saved'), { timeout: 5000 });
+
+  // setTargets was called with updated value
+  const call = await getLastApiCall(page, 'setTargets');
+  expect(call).not.toBeNull();
+  expect(call.body.calories).toBe(2400);
+  // All fields should be sent (protein should be 150, not 0)
+  expect(call.body.protein).toBe(150);
+});
+
+test('UI-3-T B · Settings: error shown inline (not in chat) when save fails', async ({ page }) => {
+  await loginAs(page);
+  await page.evaluate(() => {
+    window.__mockStats = { consumed: 0, targets: {}, meals: [] };
+    window.__mockSetTargets = { success: false, error: 'Sheet error' };
+  });
+
+  await page.locator('[onclick="openSettings()"]').click();
+  await page.waitForSelector('#settings-screen:not(.hidden)', { timeout: 3000 });
+
+  await page.locator('#settings-save-btn').click();
+
+  // Error should appear in settings screen, not chat screen
+  await page.waitForFunction(() => document.getElementById('settings-error').style.display !== 'none', { timeout: 5000 });
+  const errText = await page.locator('#settings-error').textContent();
+  expect(errText).toContain('Could not save targets');
+
+  // Chat screen error banner should NOT be shown
+  await expect(page.locator('#error-banner')).not.toHaveClass(/show/);
+});
+
+test('UI-4-T · Stop button appears while AI is thinking; clicking cancels and re-enables input', async ({ page }) => {
+  await loginAs(page);
+  await setMockStats(page);
+
+  // Intercept the chat API to simulate slow response
+  let resolveChat;
+  const chatPromise = new Promise(resolve => { resolveChat = resolve; });
+  await page.route(API_URL_PATTERN, async (route, req) => {
+    const body = JSON.parse(req.postData() || '{}');
+    if (body.action === 'chat') {
+      await chatPromise;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ reply: 'Done!' }) });
+    }
+    if (body.action === 'getStats') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_STATS) });
+    }
+    route.continue();
+  });
+
+  await page.fill('#msg-input', 'what should I eat?');
+  await page.locator('#btn-send').click();
+
+  // Stop button should appear
+  await expect(page.locator('#btn-stop')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('#btn-send')).toBeHidden();
+
+  // Click stop
+  await page.locator('#btn-stop').click();
+
+  // Input should be re-enabled, send button restored
+  await expect(page.locator('#btn-stop')).toBeHidden({ timeout: 3000 });
+  await expect(page.locator('#btn-send')).toBeVisible();
+  await expect(page.locator('#msg-input')).not.toBeDisabled();
+
+  resolveChat(); // resolve to avoid hanging
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Block TPLR — Template rendering
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('TPLR-1-T · "Show my templates" → template card rendered (not raw HTML divs)', async ({ page }) => {
+  await loginAs(page);
+  await page.evaluate(() => {
+    window.__mockTemplate = {
+      found: true, count: 2,
+      templates: [
+        { templateName: 'breakfast', mealType: 'breakfast', calories: 420, protein: 18, fat: 12, carbs: 58, ingredients: 'oats, milk, banana' },
+        { templateName: 'post-gym snack', mealType: 'snack', calories: 340, protein: 28, fat: 5, carbs: 48, ingredients: 'banana, whey, milk' },
+      ]
+    };
+  });
+
+  await sendMessage(page, 'show my templates');
+  await page.waitForSelector('.templates-list', { timeout: 5000 });
+
+  // Template card elements should be rendered as DOM, not raw text
+  await expect(page.locator('.templates-list')).toBeVisible();
+  await expect(page.locator('.template-card').first()).toBeVisible();
+
+  // Should NOT show raw HTML as text
+  const bubbleHtml = await page.locator('.bubble.ai').last().innerHTML();
+  expect(bubbleHtml).not.toMatch(/&lt;div/);
+  expect(bubbleHtml).not.toContain('templates-grid');
+
+  // Should contain template name and calories
+  await expect(page.locator('.template-card').first()).toContainText('breakfast');
+  await expect(page.locator('.template-card').first()).toContainText('420');
+});
+
+test('TPLR-2-T · Template card shows name, type emoji, ingredients, and all 4 macros', async ({ page }) => {
+  await loginAs(page);
+  await page.evaluate(() => {
+    window.__mockTemplate = {
+      found: true, count: 1,
+      templates: [{ templateName: 'paradise', mealType: 'breakfast', calories: 389, protein: 16.9, fat: 6.9, carbs: 66.3, ingredients: 'oatmeal 100g' }]
+    };
+  });
+
+  await sendMessage(page, 'show my templates');
+  await page.waitForSelector('.template-card', { timeout: 5000 });
+
+  const card = await page.locator('.template-card').first();
+  await expect(card).toContainText('paradise');
+  await expect(card).toContainText('🌅');          // breakfast emoji
+  await expect(card).toContainText('oatmeal 100g');
+  await expect(card).toContainText('389');          // calories
+  await expect(card).toContainText('16.9');         // protein
+});
+
+test('TPLR-3-T · Empty template list → "No templates saved yet" message', async ({ page }) => {
+  await loginAs(page);
+  await page.evaluate(() => { window.__mockTemplate = { found: false, count: 0, templates: [] }; });
+
+  await sendMessage(page, 'show my templates');
+  await page.waitForSelector('.templates-list', { timeout: 5000 });
+  await expect(page.locator('.templates-list')).toContainText('No templates saved yet');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Block NORM — API response normalization (real API vs mock)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('NORM-1-T · Real API stats format (totals.calories) renders correctly', async ({ page }) => {
+  await loginAs(page);
+  // Simulate real Apps Script getStats response format
+  await page.evaluate(() => {
+    window.__mockStats = {
+      date: '2026-05-08',
+      totals: { calories: 1400, protein: 85, fat: 40, carbs: 160 },
+      targets: { calories: 2200, protein: 150, fat: 70, carbs: 250 },
+      meals: [
+        { MealType: 'breakfast', Name: 'Oats', Calories: 430, Protein: 15, Fat: 8, Carbs: 75 },
+        { MealType: 'lunch', Name: 'Chicken Rice', Calories: 620, Protein: 45, Fat: 12, Carbs: 80 },
+        { MealType: 'snack', Name: 'Yogurt', Calories: 350, Protein: 25, Fat: 20, Carbs: 5 },
+      ]
+    };
+  });
+
+  await sendMessage(page, 'show my stats');
+  await page.waitForSelector('.stats-card', { timeout: 5000 });
+
+  const card = await page.locator('.stats-card').first().textContent();
+  // Should show 1400 (from totals.calories), not 0
+  expect(card).toContain('1400');
+  expect(card).toContain('2200');
+  // Meal types should be normalized (TitleCase → camelCase)
+  expect(card).toContain('Breakfast');
+  expect(card).toContain('Lunch');
+});
+
+test('NORM-2-T · Real API deleteMeal response (success:true, no ok) → shows "Meal deleted", not "not found"', async ({ page }) => {
+  await loginAs(page);
+  await setMockStats(page, MOCK_STATS);
+  // Real API returns {success: true, deleted: {...}} — no 'ok' field
+  await page.evaluate(() => {
+    window.__mockDeleteMeal = { success: true, deleted: { id: '1', name: 'Morning Oats', mealType: 'breakfast', calories: 430 } };
+    window.__mockStats = { consumed: 970, targets: { calories: 2200, protein: 150, fat: 70, carbs: 250 }, meals: [] };
+  });
+  await setMockChat(page,
+    'Will delete: Morning Oats, 430 kcal. Confirm?\n' +
+    '{"action":"deleteMeal","payload":{"mealType":"breakfast","id":"1"}}'
+  );
+  await clearApiLog(page);
+
+  await sendMessage(page, 'delete my breakfast');
+  await waitForAiText(page, 'Will delete');
+  await page.evaluate(() => { window.__mockChatResponse = null; });
+  await sendMessage(page, 'yes');
+
+  // Should show success message, NOT "No breakfast logged today to delete"
+  await waitForAiText(page, 'Meal deleted');
+  const bubbles = await page.evaluate(() =>
+    [...document.querySelectorAll('.bubble.ai')].map(b => b.textContent)
+  );
+  const confirmMsg = bubbles.find(b => b.includes('Meal deleted') || b.includes('logged') && b.includes('remaining'));
+  expect(confirmMsg).toBeTruthy();
+  // Should NOT say "No breakfast logged today to delete"
+  const wrongMsg = bubbles.find(b => b.includes('No breakfast logged today to delete'));
+  expect(wrongMsg).toBeUndefined();
+});
+
+test('NORM-3-T · Template keys normalized from TitleCase → system prompt has correct template data', async ({ page }) => {
+  await loginAs(page);
+  // Simulate real API template response with TitleCase keys
+  await page.evaluate(() => {
+    window.__mockTemplate = {
+      found: true, count: 1,
+      templates: [{ TemplateName: 'breakfast', MealType: 'breakfast', Calories: 420, Protein: 18, Fat: 12, Carbs: 58, Ingredients: 'oats, milk, banana' }]
+    };
+  });
+
+  // Check via __normalizeTemplates hook
+  const normalized = await page.evaluate(() =>
+    window.__normalizeTemplates([{ TemplateName: 'breakfast', MealType: 'breakfast', Calories: 420, Protein: 18, Fat: 12, Carbs: 58, Ingredients: 'oats, milk' }])
+  );
+  expect(normalized[0].templateName).toBe('breakfast');
+  expect(normalized[0].calories).toBe(420);
+  expect(normalized[0].mealType).toBe('breakfast');
+});
+
+test('NORM-4-T · normalizeStats maps totals.calories → consumed without overwriting existing consumed', async ({ page }) => {
+  await loginAs(page);
+
+  // Real API format: should map totals.calories → consumed
+  const real = await page.evaluate(() =>
+    window.__normalizeStats({ totals: { calories: 1500 }, targets: { calories: 2000 }, meals: [] })
+  );
+  expect(real.consumed).toBe(1500);
+
+  // Mock format: already has consumed — should not override
+  const mock = await page.evaluate(() =>
+    window.__normalizeStats({ consumed: 1400, totals: { calories: 9999 }, targets: { calories: 2200 }, meals: [] })
+  );
+  expect(mock.consumed).toBe(1400);
 });
