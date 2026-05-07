@@ -59,11 +59,14 @@
 - None
 
 ## What the next session needs to do
-- Session 8 — Full UAT Run: run all 37 UAT tests (F-1.x through F-9.x + ERR-x) using Playwright, fix all failures, commit as v1.0
+- Session 8 — Full UAT Run: run all 37 UAT tests (F-1.x → F-2.x → F-3.x → F-4.x → F-5.x → F-6.x → F-7.x → F-8.x → F-9.x → ERR-x) in block order using Playwright
+- Fix every failure found — retest until all 37 = PASS
+- Commit as `git commit -m "test: all 37 UAT passing — v1.0 ready"` and push
 
 ## Known issues / decisions
 - Service worker registered via Blob URL — works in Chrome; scope is limited; SW intercepts only Apps Script fetches as network fallback, not asset caching
 - `GOOGLE_CLIENT_ID` is still a placeholder; real Google sign-in requires an OAuth 2.0 client ID configured in Google Cloud Console
 - Test hooks (`__testLogin`, `__setSession`, `__mockChatFail`, `__mockLogMealFail`, `__mockStats`, `__mockTemplate`, `__mockUpdateTemplate`, `__mockLogMeal`, `__mockDeleteMeal`, `__mockUpdateMeal`, `__mockChatResponse`, `__mockExportData`, `__apiCallLog`, `__setPendingAction`, `__setPendingPhoto`, `__showPhotoEditCard`) are intentionally left in; remove before production
-- `parseClaudeResponse` now uses a balanced-brace parser with string-escape awareness + code-block fallback; handles nested payloads safely
+- `parseClaudeResponse` uses a balanced-brace parser with string-escape awareness + code-block fallback; handles nested payloads safely
 - Photo button queues one image per send; base64 image is not persisted to localStorage chat history (only text is stored)
+- Low-confidence photo edit card stays in chat history after save (renders again on reload but is inert — no pending action)
