@@ -410,6 +410,7 @@ async function apiFetch(action, body = {}) {
   if (action === 'getStats'       && window.__mockStats)             return window.__mockStats;
   if (action === 'getTemplate'    && window.__mockTemplate  != null) return window.__mockTemplate;
   if (action === 'updateTemplate' && window.__mockUpdateTemplate)    return window.__mockUpdateTemplate;
+  if (action === 'setTargets'     && window.__mockSetTargets)        return window.__mockSetTargets;
   const res = await fetch(API_URL, {
     method: "POST",
     body: JSON.stringify({ ...body, action, userEmail: getSession()?.email, date: localDateString() })
@@ -478,6 +479,10 @@ function isStatsQuery(t) {
   return /show.*(my\s+)?(stats|statistics|summary)|today.*(summary|stats)|how am i doing/i.test(t.trim());
 }
 
+function isTargetsQuery(t) {
+  return /show.*(my\s+)?(current\s+)?targets?|(what|show).*(my\s+)?macro.*(goal|target)|(what are|show).*(my\s+)?targets?/i.test(t.trim());
+}
+
 function macroStatus(consumed, target) {
   if (!target) return '';
   const r = consumed / target;
@@ -525,6 +530,36 @@ function renderStatsCard(stats) {
 <div class="stat-row"><div class="stat-head"><span class="stat-name">Carbs</span><span class="stat-val">${cCarb} / ${tCarb}g${tCarb ? '  ' + macroStatus(cCarb, tCarb) : ''}</span></div>${bar(cCarb, tCarb, 'carb')}</div>
 <div class="meals-row">${mealChips}</div>
 </div>`;
+}
+
+function renderTargetsCard(stats) {
+  const t = stats.targets || {};
+  const hasAny = t.calories || t.protein || t.fat || t.carbs || t.fiber ||
+                 t.breakfastCal || t.lunchCal || t.dinnerCal;
+
+  if (!hasAny) {
+    return `<div class="stats-card"><div class="stats-title">🎯 Your Daily Targets</div><div style="color:var(--text-mid);font-size:13px">No targets set yet. Try "set my daily target: 2000 calories, 150g protein…"</div></div>`;
+  }
+
+  let rows = '';
+  if (t.calories) rows += `<div class="stat-row"><div class="stat-head"><span class="stat-name">Calories</span><span class="stat-val">${t.calories} kcal</span></div></div>`;
+  if (t.protein || t.fat || t.carbs) {
+    const parts = [];
+    if (t.protein) parts.push(`P: ${t.protein}g`);
+    if (t.fat)     parts.push(`F: ${t.fat}g`);
+    if (t.carbs)   parts.push(`C: ${t.carbs}g`);
+    if (t.fiber)   parts.push(`Fiber: ${t.fiber}g`);
+    rows += `<div class="stat-row"><div class="stat-head"><span class="stat-name">Macros</span><span class="stat-val">${parts.join('  ')}</span></div></div>`;
+  }
+  if (t.breakfastCal || t.lunchCal || t.dinnerCal) {
+    const mparts = [];
+    if (t.breakfastCal) mparts.push(`Breakfast: ${t.breakfastCal} kcal`);
+    if (t.lunchCal)     mparts.push(`Lunch: ${t.lunchCal} kcal`);
+    if (t.dinnerCal)    mparts.push(`Dinner: ${t.dinnerCal} kcal`);
+    rows += `<div class="stat-row"><div class="stat-head"><span class="stat-name">Per meal</span><span class="stat-val">${mparts.join('  ')}</span></div></div>`;
+  }
+
+  return `<div class="stats-card"><div class="stats-title">🎯 Your Daily Targets</div>${rows}</div>`;
 }
 
 // ── System prompt with live stats ────────────────────────────────────────────────
@@ -576,7 +611,8 @@ RULES:
 - To log from template: use logMeal action with notes="from template: [templateName]"
 - Partial override (e.g. "without bread"): recalculate macros, use notes="modified from template: [templateName] (without [item])"
 - updateTemplate: ONLY when user explicitly asks to update/create/save a template. Always confirm first, never both confirm and action JSON in same turn.
-- Template keyword/mealType search with no matches: respond with exactly "No saved templates found for that search"`;
+- Template keyword/mealType search with no matches: respond with exactly "No saved templates found for that search"
+- setTargets: when user asks to set/update nutrition targets, extract fields (calories, protein, fat, carbs, fiber, breakfastCal, lunchCal, dinnerCal) and confirm first. Action payload uses those field names exactly.`;
 }
 
 // ── Error banner ──────────────────────────────────────────────────────────────────
@@ -608,6 +644,14 @@ async function executeAction(action, payload) {
     if (action === 'updateTemplate') {
       const name = payload.templateName || 'Template';
       const aiMsg = { role: 'ai', content: `"${name}" template saved!`, time: nowTime() };
+      chatMsgs.push(aiMsg);
+      saveHistory();
+      pushMsg(aiMsg);
+      return;
+    }
+
+    if (action === 'setTargets') {
+      const aiMsg = { role: 'ai', content: 'Targets updated! Your new daily targets have been saved.', time: nowTime() };
       chatMsgs.push(aiMsg);
       saveHistory();
       pushMsg(aiMsg);
@@ -870,6 +914,32 @@ async function sendMsg() {
     return;
   }
 
+  // ── Targets query intercept ───────────────────────────────────────────────────
+  if (isTargetsQuery(text)) {
+    input.disabled = true;
+    setTyping(true);
+    try {
+      const stats = await apiFetch('getStats');
+      setTyping(false);
+      const userMsg    = { role: 'user', content: text, time };
+      const targetsMsg = { role: 'ai', content: renderTargetsCard(stats), html: true, time: nowTime() };
+      chatMsgs.push(userMsg, targetsMsg);
+      saveHistory();
+      document.getElementById('chat-empty').style.display = 'none';
+      pushMsg(userMsg);
+      pushMsg(targetsMsg);
+      input.value = '';
+      onInputChange();
+    } catch {
+      setTyping(false);
+      showBanner('AI is unreachable — please try again', () => sendMsg());
+    } finally {
+      input.disabled = false;
+      input.focus();
+    }
+    return;
+  }
+
   // ── Build message content (text + optional photo) ─────────────────────────────
   let msgContent = text;
   if (pendingPhoto) {
@@ -979,6 +1049,7 @@ window.__mockLogMealFail    = false;
 window.__mockStats          = null;
 window.__mockTemplate       = null;   // {templates:[...]} or null to pass-through
 window.__mockUpdateTemplate = null;   // e.g. {ok:true} to stub success
+window.__mockSetTargets     = null;   // e.g. {ok:true} to stub success
 window.__mockLogMeal        = null;   // e.g. {ok:true, id:'test_id'} to stub success
 window.__mockChatResponse   = null;   // string to stub Claude text response
 window.__apiCallLog         = [];

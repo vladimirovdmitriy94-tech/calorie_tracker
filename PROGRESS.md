@@ -5,6 +5,7 @@
 - Session 1 — Meal Logging: getStats → system prompt, action JSON parser, pending action flow, logMeal execution, post-save kcal totals, error banners, photo button
 - Session 2 — Daily Stats: `renderStatsCard()`, `macroStatus()`, `isStatsQuery()` added; stats card injected on "show my stats"/"today's summary"/"how am I doing"; auto-refresh after logMeal/deleteMeal/updateMeal; `__mockStats` test hook
 - Session 3 — Meal Templates: templates fetched via `getTemplate` and injected into system prompt as `SAVED TEMPLATES:` block; TODAY section now includes full macros + ID per meal so Claude can copy exact values; `updateTemplate` action handled in `executeAction`; `parseClaudeResponse` upgraded to balanced-brace parser with string-escape awareness + code-block fallback; test hooks `__mockTemplate`, `__mockUpdateTemplate`, `__mockLogMeal`, `__mockChatResponse`, `__apiCallLog`, `__clearApiLog` added
+- Session 4 — Targets: `setTargets` pending action flow added to `executeAction`; `isTargetsQuery()` detects "show my current targets" / "what are my macro goals"; `renderTargetsCard()` displays targets-only readable card; targets query intercept added to `sendMsg`; `__mockSetTargets` test hook added; system prompt updated with setTargets field names
 
 ## UAT tests passing
 - F-1.1-T: Login screen loads, Google button visible, no app content behind it
@@ -32,13 +33,17 @@
 - F-3.5-T: "save as post-gym snack: banana, whey, milk" → `updateTemplate` called with `templateName="post-gym snack"`
 - F-3.6-T: "save today's lunch as template 'my_lunch'" → `updateTemplate` called with exact calories/protein/fat/carbs from logged meal, Claude confirms
 - F-3.7-T C: Template search with no matches → "No saved templates found for that search" shown
+- F-5.1-T: "set my daily target: 2000 calories, 140g protein..." → setTargets called with correct payload, confirmation shown
+- F-5.2-T: "set breakfast target to 450 kcal and lunch to 700 kcal" → setTargets called with breakfastCal/lunchCal
+- F-5.3-T: mockStats with April targets → 1800 kcal shown; mockStats with January targets → 2200 kcal shown
+- F-5.4-T: "show my current targets" → readable targets card, no raw JSON
 
 ## UAT tests still failing
 - None
 
 ## What the next session needs to do
-- Session 4 — Targets: `setTargets` pending action flow; "show my current targets" / "what are my macro goals" → call getStats → readable targets display (no stats card, just text)
-- Session 4 — Tests: F-5.1-T (set daily targets), F-5.2-T (set per-meal target), F-5.4-T (show current targets)
+- Session 5 — Edit & Delete: `deleteMeal` and `updateMeal` pending action flows; "No [mealType] logged today to delete" error message; stats refresh after delete/edit
+- Session 5 — Tests: F-8.1-T A (delete by type), F-8.1-T B (delete non-existent), F-8.2-T (edit meal)
 
 ## Known issues / decisions
 - Service worker registered via Blob URL — works in Chrome; scope is limited; SW intercepts only Apps Script fetches as network fallback, not asset caching
