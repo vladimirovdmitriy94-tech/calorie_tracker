@@ -273,6 +273,32 @@ body {
 .meal-chip { background: var(--bg-deep); border-radius: 10px; padding: 8px 10px; }
 .meal-chip-name { display: block; font-size: 12px; font-weight: 500; color: var(--text); }
 .meal-chip-cal  { display: block; font-size: 11px; color: var(--text-mid); margin-top: 2px; }
+
+/* ── confirm dialog ── */
+#confirm-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 100;
+  align-items: center; justify-content: center;
+  padding: 20px;
+}
+#confirm-overlay.show { display: flex; animation: fadeIn 0.15s ease; }
+.confirm-card {
+  background: var(--surface); border-radius: 18px;
+  padding: 24px; max-width: 320px; width: 100%;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  animation: fadeUp 0.2s ease;
+}
+.confirm-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.confirm-msg   { font-size: 14px; color: var(--text-mid); line-height: 1.5; margin-bottom: 20px; }
+.confirm-btns  { display: flex; gap: 10px; }
+.confirm-btn {
+  flex: 1; height: 42px; border-radius: 12px; border: none;
+  font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.confirm-btn.cancel { background: var(--bg-deep); color: var(--text-mid); }
+.confirm-btn.danger { background: var(--red); color: #fff; }
 </style>
 </head>
 <body>
@@ -316,6 +342,13 @@ body {
       </div>
     </div>
     <div class="hdr-right">
+      <button class="icon-btn" onclick="exportMealLog()" title="Export meals">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
       <button class="icon-btn" onclick="clearChat()" title="Clear chat">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="3 6 5 6 21 6"/>
@@ -370,6 +403,18 @@ body {
   </div>
 </div>
 
+<!-- ── Confirm dialog ── -->
+<div id="confirm-overlay">
+  <div class="confirm-card">
+    <div class="confirm-title" id="confirm-title"></div>
+    <div class="confirm-msg" id="confirm-msg"></div>
+    <div class="confirm-btns">
+      <button class="confirm-btn cancel" onclick="hideConfirm()">Cancel</button>
+      <button class="confirm-btn danger" id="confirm-ok-btn" onclick="confirmOk()"></button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── Constants ────────────────────────────────────────────────────────────────────
 const API_URL  = "https://script.google.com/macros/s/AKfycbwNq6SM9VzEFcBh6z_LDOO_p4BRZdnsv0W_Sn3gXZAiz9tSkZvW6qSPIh-HqXjbwDl6aQ/exec";
@@ -413,6 +458,7 @@ async function apiFetch(action, body = {}) {
   if (action === 'setTargets'     && window.__mockSetTargets)        return window.__mockSetTargets;
   if (action === 'deleteMeal'     && window.__mockDeleteMeal != null) return window.__mockDeleteMeal;
   if (action === 'updateMeal'     && window.__mockUpdateMeal != null) return window.__mockUpdateMeal;
+  if (action === 'exportData'     && window.__mockExportData != null) return window.__mockExportData;
   const res = await fetch(API_URL, {
     method: "POST",
     body: JSON.stringify({ ...body, action, userEmail: getSession()?.email, date: localDateString() })
@@ -962,6 +1008,19 @@ async function sendMsg() {
     return;
   }
 
+  // ── Export query intercept ───────────────────────────────────────────────────
+  if (isExportQuery(text)) {
+    const userMsg = { role: 'user', content: text, time };
+    chatMsgs.push(userMsg);
+    saveHistory();
+    document.getElementById('chat-empty').style.display = 'none';
+    pushMsg(userMsg);
+    input.value = '';
+    onInputChange();
+    await exportMealLog();
+    return;
+  }
+
   // ── Build message content (text + optional photo) ─────────────────────────────
   let msgContent = text;
   if (pendingPhoto) {
@@ -1017,11 +1076,63 @@ async function sendMsg() {
   }
 }
 
+// ── Confirm dialog ───────────────────────────────────────────────────────────────
+let confirmCallback = null;
+
+function showConfirm(title, msg, okLabel, onOk) {
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-msg').textContent   = msg;
+  document.getElementById('confirm-ok-btn').textContent = okLabel;
+  confirmCallback = onOk;
+  document.getElementById('confirm-overlay').classList.add('show');
+}
+
+function hideConfirm() {
+  document.getElementById('confirm-overlay').classList.remove('show');
+  confirmCallback = null;
+}
+
+function confirmOk() {
+  const cb = confirmCallback;
+  hideConfirm();
+  if (cb) cb();
+}
+
 function clearChat() {
-  chatMsgs      = [];
-  pendingAction = null;
-  saveHistory();
-  renderAll();
+  showConfirm(
+    'Clear chat?',
+    "Clear chat history? This won't affect your meal data.",
+    'Clear',
+    () => {
+      chatMsgs      = [];
+      pendingAction = null;
+      localStorage.removeItem(HISTORY_KEY);
+      renderAll();
+    }
+  );
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────────
+async function exportMealLog() {
+  setTyping(true);
+  try {
+    const result = await apiFetch('exportData');
+    setTyping(false);
+    const csv = result.csv || '';
+    if (!csv) { showBanner('No data to export', null); return; }
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a    = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    a.download = 'meals-export.csv';
+    a.click();
+  } catch {
+    setTyping(false);
+    showBanner('Export failed — please try again', null);
+  }
+}
+
+function isExportQuery(t) {
+  return /export.*(my\s+)?(meal|food|data|log|history)|download.*meal/i.test(t.trim());
 }
 
 // ── PWA: manifest ─────────────────────────────────────────────────────────────────
@@ -1075,6 +1186,7 @@ window.__mockSetTargets     = null;   // e.g. {ok:true} to stub success
 window.__mockLogMeal        = null;   // e.g. {ok:true, id:'test_id'} to stub success
 window.__mockDeleteMeal     = null;   // e.g. {ok:true} or {ok:false} to stub delete
 window.__mockUpdateMeal     = null;   // e.g. {ok:true} to stub update
+window.__mockExportData     = null;   // e.g. {csv: "Date,MealType,...\n..."} to stub export
 window.__mockChatResponse   = null;   // string to stub Claude text response
 window.__apiCallLog         = [];
 window.__clearApiLog        = ()            => { window.__apiCallLog = []; };
