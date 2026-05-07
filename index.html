@@ -206,7 +206,7 @@ body {
   display: flex; gap: 8px; align-items: center;
   background: var(--surface); border-radius: 24px;
   border: 1px solid var(--border);
-  padding: 4px 4px 4px 14px;
+  padding: 4px 4px 4px 10px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.05);
 }
 #msg-input {
@@ -222,6 +222,38 @@ body {
   cursor: default; transition: background 0.2s; flex-shrink: 0;
 }
 #btn-send.active { background: var(--accent); color: #fff; cursor: pointer; }
+
+/* photo button */
+#btn-photo {
+  width: 30px; height: 30px; border: none; background: transparent;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text-light); flex-shrink: 0; padding: 0;
+  transition: color 0.2s;
+}
+#btn-photo:hover { color: var(--accent); }
+#btn-photo.has-photo { color: var(--accent); }
+
+/* error banner */
+#error-banner {
+  display: none;
+  background: oklch(0.96 0.04 25);
+  border: 1px solid oklch(0.88 0.07 25);
+  border-radius: 12px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  align-items: center;
+  gap: 8px;
+}
+#error-banner.show { display: flex; }
+#error-banner-text { flex: 1; font-size: 13px; color: var(--red); }
+#error-banner-retry {
+  font-size: 12px; font-weight: 600;
+  background: var(--red); color: #fff;
+  border: none; border-radius: 8px;
+  padding: 4px 10px; cursor: pointer;
+  font-family: inherit; flex-shrink: 0;
+}
+#error-banner-retry:hover { opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -295,7 +327,18 @@ body {
   </div>
 
   <div id="input-bar">
+    <div id="error-banner">
+      <span id="error-banner-text"></span>
+      <button id="error-banner-retry" onclick="retryBannerAction()">Retry</button>
+    </div>
     <div class="input-wrap">
+      <button id="btn-photo" onclick="triggerPhotoUpload()" title="Add photo">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+      </button>
+      <input id="photo-input" type="file" accept="image/*" style="display:none" onchange="handlePhotoSelected(this)"/>
       <input id="msg-input" type="text" placeholder="Log a meal or ask anything…"
         oninput="onInputChange()" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"/>
       <button id="btn-send" onclick="sendMsg()">
@@ -309,7 +352,7 @@ body {
 </div>
 
 <script>
-// ── Constants ───────────────────────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────────
 const API_URL  = "https://script.google.com/macros/s/AKfycbwNq6SM9VzEFcBh6z_LDOO_p4BRZdnsv0W_Sn3gXZAiz9tSkZvW6qSPIh-HqXjbwDl6aQ/exec";
 const APP_NAME = "🥗 Calorie Tracker";
 const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID";
@@ -317,7 +360,13 @@ const SESSION_KEY = "ct_session";
 const HISTORY_KEY = "ct_chat_history";
 const MAX_MSGS    = 100;
 
-// ── Helpers ─────────────────────────────────────────────────────────────────────
+// ── State ────────────────────────────────────────────────────────────────────────
+let chatMsgs      = [];
+let pendingAction = null;   // { action, payload } awaiting user confirmation
+let pendingPhoto  = null;   // { data, media_type } queued for next send
+let retryCallback = null;   // function called by Retry button
+
+// ── Helpers ──────────────────────────────────────────────────────────────────────
 function localDateString() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -330,6 +379,8 @@ function saveSession(s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); 
 function clearSession()  { localStorage.removeItem(SESSION_KEY); }
 
 async function apiFetch(action, body = {}) {
+  if (action === 'chat'    && window.__mockChatFail)    throw new Error('mocked chat failure');
+  if (action === 'logMeal' && window.__mockLogMealFail) throw new Error('mocked logMeal failure');
   const res = await fetch(API_URL, {
     method: "POST",
     body: JSON.stringify({ ...body, action, userEmail: getSession()?.email, date: localDateString() })
@@ -337,9 +388,7 @@ async function apiFetch(action, body = {}) {
   return res.json();
 }
 
-// ── Chat history ────────────────────────────────────────────────────────────────
-let chatMsgs = [];
-
+// ── Chat history ─────────────────────────────────────────────────────────────────
 function loadHistory() {
   try { chatMsgs = JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
   catch { chatMsgs = []; }
@@ -350,13 +399,46 @@ function saveHistory() {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(chatMsgs));
 }
 
-// ── System prompt stub ──────────────────────────────────────────────────────────
-function buildSystemPrompt() {
+// ── Action JSON parser ────────────────────────────────────────────────────────────
+function parseClaudeResponse(text) {
+  const re = /\{"action":\s*"[^"]+",\s*"payload":\s*\{[^}]*\}\}/g;
+  const matches = text.match(re);
+  const clean = text.replace(re, "").trim();
+  if (!matches) return { text: clean, action: null };
+  try {
+    const obj = JSON.parse(matches[0]);
+    return { text: clean, action: obj.action, payload: obj.payload };
+  } catch { return { text: clean, action: null }; }
+}
+
+function isAffirmative(t) {
+  return /^(yes|y|sure|ok|okay|log it|go ahead|yep|yup|do it|confirm|correct|right|save|save it|sounds good|perfect|please|yeah)\b/i.test(t.trim());
+}
+
+// ── System prompt with live stats ────────────────────────────────────────────────
+async function buildSystemPromptFull() {
   const s = getSession();
+  let stats = {};
+  try { stats = await apiFetch('getStats'); } catch {}
+
+  const targets     = stats.targets || {};
+  const meals       = stats.meals   || [];
+  const consumed    = stats.consumed || 0;
+  const remaining   = (targets.calories || 0) - consumed;
+
+  const todaysMeals = meals.length
+    ? meals.map(m => `- ${m.mealType || 'meal'}: ${m.name} (${m.calories}kcal)`).join('\n')
+    : 'Nothing logged yet';
+
   return `You are a nutrition assistant for a personal calorie tracker.
 User: ${s?.name || 'User'} | Today: ${localDateString()} | Timezone: Europe/Rome
 
-TARGETS: — kcal | P:—g F:—g C:—g
+TARGETS: ${targets.calories || '—'}kcal | P:${targets.protein || '—'}g F:${targets.fat || '—'}g C:${targets.carbs || '—'}g
+Breakfast:${targets.breakfastCal || '—'}kcal Lunch:${targets.lunchCal || '—'}kcal Dinner:${targets.dinnerCal || '—'}kcal
+
+TODAY:
+${todaysMeals}
+Running: ${consumed}kcal consumed | ${remaining}kcal remaining
 
 RULES:
 - Ask ONE clarifying question for unclear quantities, never guess
@@ -367,17 +449,79 @@ RULES:
 - Meal suggestions: always 2-3 options with calories`;
 }
 
-// ── Screen management ───────────────────────────────────────────────────────────
+// ── Error banner ──────────────────────────────────────────────────────────────────
+function showBanner(msg, onRetry) {
+  document.getElementById('error-banner-text').textContent = msg;
+  document.getElementById('error-banner').classList.add('show');
+  retryCallback = onRetry || null;
+}
+
+function hideBanner() {
+  document.getElementById('error-banner').classList.remove('show');
+  retryCallback = null;
+}
+
+function retryBannerAction() {
+  hideBanner();
+  if (retryCallback) retryCallback();
+}
+
+// ── Execute confirmed action ──────────────────────────────────────────────────────
+async function executeAction(action, payload) {
+  setTyping(true);
+  try {
+    const result = await apiFetch(action, payload);
+    setTyping(false);
+
+    if (!result || (!result.ok && !result.id)) throw new Error(result?.error || 'Save failed');
+
+    let stats = {};
+    try { stats = await apiFetch('getStats'); } catch {}
+    const consumed  = stats.consumed || 0;
+    const targets   = stats.targets  || {};
+    const remaining = (targets.calories || 0) - consumed;
+
+    const idPart    = result.id ? ` (ID: ${result.id})` : '';
+    const aiContent = `Meal logged successfully!${idPart}\n\nYou've now logged ${consumed} kcal today — ${remaining} kcal remaining`;
+    const aiMsg = { role: 'ai', content: aiContent, time: nowTime() };
+    chatMsgs.push(aiMsg);
+    saveHistory();
+    pushMsg(aiMsg);
+  } catch {
+    setTyping(false);
+    const a = action, p = payload;
+    showBanner("Meal estimated but couldn't be saved — tap to retry", () => executeAction(a, p));
+  }
+}
+
+// ── Photo ─────────────────────────────────────────────────────────────────────────
+function triggerPhotoUpload() {
+  document.getElementById('photo-input').click();
+}
+
+function handlePhotoSelected(input) {
+  if (!input.files || !input.files[0]) return;
+  const file   = input.files[0];
+  const reader = new FileReader();
+  reader.onload = e => {
+    pendingPhoto = { data: e.target.result.split(',')[1], media_type: file.type || 'image/jpeg' };
+    document.getElementById('btn-photo').classList.add('has-photo');
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+}
+
+// ── Screen management ─────────────────────────────────────────────────────────────
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(el => el.classList.add('hidden'));
   document.getElementById(id).classList.remove('hidden');
 }
 
-// ── Login UI ────────────────────────────────────────────────────────────────────
+// ── Login UI ──────────────────────────────────────────────────────────────────────
 function showAlert(title, msg, icon = '🔒') {
-  document.getElementById('alert-icon').textContent = icon;
+  document.getElementById('alert-icon').textContent  = icon;
   document.getElementById('alert-title').textContent = title;
-  document.getElementById('alert-msg').textContent = msg;
+  document.getElementById('alert-msg').textContent   = msg;
   document.getElementById('login-alert').classList.add('show');
 }
 function hideAlert() { document.getElementById('login-alert').classList.remove('show'); }
@@ -385,17 +529,17 @@ function hideAlert() { document.getElementById('login-alert').classList.remove('
 function setBtnLoading(on) {
   const btn = document.getElementById('btn-google');
   btn.disabled = on;
-  const spinner = `<div style="width:20px;height:20px;border-radius:50%;border:2.5px solid var(--border);border-top-color:var(--accent);animation:spin 0.8s linear infinite"></div>`;
+  const spinner    = `<div style="width:20px;height:20px;border-radius:50%;border:2.5px solid var(--border);border-top-color:var(--accent);animation:spin 0.8s linear infinite"></div>`;
   const googleIcon = `<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>`;
   btn.innerHTML = on ? `${spinner} Signing in…` : `${googleIcon} Sign in with Google`;
 }
 
-// ── Auth ────────────────────────────────────────────────────────────────────────
+// ── Auth ──────────────────────────────────────────────────────────────────────────
 async function processLogin(email, name) {
   setBtnLoading(true);
   hideAlert();
   try {
-    const url = `${API_URL}?action=validateUser&email=${encodeURIComponent(email)}`;
+    const url  = `${API_URL}?action=validateUser&email=${encodeURIComponent(email)}`;
     const res  = await fetch(url);
     const data = await res.json();
 
@@ -443,7 +587,11 @@ function initGIS() {
   });
 }
 
-// ── Chat ────────────────────────────────────────────────────────────────────────
+// ── Chat ──────────────────────────────────────────────────────────────────────────
+function nowTime() {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function openChat() {
   loadHistory();
   renderAll();
@@ -524,32 +672,82 @@ async function sendMsg() {
   const text  = input.value.trim();
   if (!text) return;
 
-  input.value = '';
-  onInputChange();
-  input.disabled = true;
+  hideBanner();
+  const time = nowTime();
 
-  const now     = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
-  const userMsg = { role:'user', content:text, time:now };
-  chatMsgs.push(userMsg);
-  saveHistory();
-  pushMsg(userMsg);
+  // ── Pending action intercept ──────────────────────────────────────────────────
+  if (pendingAction) {
+    if (isAffirmative(text)) {
+      const { action, payload } = pendingAction;
+      pendingAction = null;
+
+      input.value = '';
+      onInputChange();
+      input.disabled = true;
+
+      const userMsg = { role: 'user', content: text, time };
+      chatMsgs.push(userMsg);
+      saveHistory();
+      pushMsg(userMsg);
+
+      await executeAction(action, payload);
+
+      input.disabled = false;
+      input.focus();
+      return;
+    }
+    pendingAction = null;
+  }
+
+  // ── Build message content (text + optional photo) ─────────────────────────────
+  let msgContent = text;
+  if (pendingPhoto) {
+    msgContent = [
+      { type: 'text', text },
+      { type: 'image', source: { type: 'base64', media_type: pendingPhoto.media_type, data: pendingPhoto.data } }
+    ];
+    pendingPhoto = null;
+    document.getElementById('btn-photo').classList.remove('has-photo');
+  }
+
+  // ── Normal chat flow ──────────────────────────────────────────────────────────
+  input.disabled = true;
   setTyping(true);
 
   try {
-    const history = chatMsgs.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }));
-    const data    = await apiFetch('chat', { messages: history, systemPrompt: buildSystemPrompt() });
+    const systemPrompt = await buildSystemPromptFull();
+
+    const apiHistory = [
+      ...chatMsgs.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
+      { role: 'user', content: msgContent }
+    ];
+
+    const data = await apiFetch('chat', { messages: apiHistory, systemPrompt });
     setTyping(false);
-    const text = data.response || data.content || data.text || 'AI is unreachable — please try again';
-    const aiMsg = { role:'ai', content:text, time: new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) };
-    chatMsgs.push(aiMsg);
+
+    const rawText = data.response || data.content || data.text || '';
+    if (!rawText) throw new Error('empty response');
+
+    const parsed = parseClaudeResponse(rawText);
+    if (parsed.action) pendingAction = { action: parsed.action, payload: parsed.payload };
+
+    // Commit both messages only on success
+    const userMsg = { role: 'user', content: text, time };
+    const aiMsg   = { role: 'ai',   content: parsed.text, time: nowTime() };
+    chatMsgs.push(userMsg, aiMsg);
     saveHistory();
+
+    document.getElementById('chat-empty').style.display = 'none';
+    pushMsg(userMsg);
     pushMsg(aiMsg);
+
+    input.value = '';
+    onInputChange();
+
   } catch {
     setTyping(false);
-    const errMsg = { role:'ai', content:'AI is unreachable — please try again', time: new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) };
-    chatMsgs.push(errMsg);
-    saveHistory();
-    pushMsg(errMsg);
+    // input is NOT cleared — text stays for retry
+    showBanner('AI is unreachable — please try again', () => sendMsg());
   } finally {
     input.disabled = false;
     input.focus();
@@ -557,12 +755,13 @@ async function sendMsg() {
 }
 
 function clearChat() {
-  chatMsgs = [];
+  chatMsgs      = [];
+  pendingAction = null;
   saveHistory();
   renderAll();
 }
 
-// ── PWA: manifest ───────────────────────────────────────────────────────────────
+// ── PWA: manifest ─────────────────────────────────────────────────────────────────
 (function injectManifest() {
   const data = {
     name: "Calorie Tracker",
@@ -578,14 +777,14 @@ function clearChat() {
       type: "image/svg+xml"
     }]
   };
-  const blob = new Blob([JSON.stringify(data)], { type:'application/manifest+json' });
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/manifest+json' });
   const link = document.createElement('link');
   link.rel   = 'manifest';
   link.href  = URL.createObjectURL(blob);
   document.head.appendChild(link);
 })();
 
-// ── PWA: service worker ─────────────────────────────────────────────────────────
+// ── PWA: service worker ───────────────────────────────────────────────────────────
 (function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   const code = `
@@ -597,15 +796,19 @@ function clearChat() {
       }
     });
   `;
-  const blob = new Blob([code], { type:'application/javascript' });
+  const blob = new Blob([code], { type: 'application/javascript' });
   navigator.serviceWorker.register(URL.createObjectURL(blob), { scope: '/' }).catch(() => {});
 })();
 
-// ── Playwright test hooks ───────────────────────────────────────────────────────
-window.__testLogin  = (email, name) => processLogin(email, name);
-window.__setSession = (s)           => saveSession(s);
+// ── Test hooks ────────────────────────────────────────────────────────────────────
+window.__testLogin       = (email, name) => processLogin(email, name);
+window.__setSession      = (s)           => saveSession(s);
+window.__mockChatFail    = false;
+window.__mockLogMealFail = false;
+window.__setPendingAction = (action, payload) => { pendingAction = { action, payload }; };
+Object.defineProperty(window, '__pendingAction', { get: () => pendingAction });
 
-// ── Boot ────────────────────────────────────────────────────────────────────────
+// ── Boot ──────────────────────────────────────────────────────────────────────────
 (function boot() {
   const s = getSession();
   if (s?.email) { openChat(); return; }
