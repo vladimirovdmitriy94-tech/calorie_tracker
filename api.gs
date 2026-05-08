@@ -28,6 +28,7 @@ function doPost(e) {
       getTemplate:    () => getTemplate(body),
       updateTemplate: () => updateTemplate(body),
       setTargets:     () => setTargets(body),
+      getTargets:     () => getTargets(body),
       deleteMeal:     () => deleteMeal(body),
       updateMeal:     () => updateMeal(body),
       chat:           () => chat(body),         // Claude API proxy
@@ -46,6 +47,7 @@ function doPost(e) {
 function doGet(e) {
   const action = e.parameter.action;
   if (action === "getStats")     return respond(getStats(e.parameter));
+  if (action === "getTargets")   return respond(getTargets(e.parameter));
   if (action === "validateUser") return respond(validateUser(e.parameter));
   return respond({ status: "Calorie Tracker API is running ✅" });
 }
@@ -308,6 +310,55 @@ function updateTemplate(body) {
     Number(body.carbs)    || 0
   ]);
   return { success: true, created: name };
+}
+
+
+// ── 4b. getTargets ───────────────────────────────────────────
+// Returns the active target row for a user as of `date` (latest DateFrom on or
+// before that day). Falls back to all-zero values when the user has no rows.
+// Body: { action, userEmail, date? }
+
+function getTargets(body) {
+  const userEmail = requireEmail(body);
+  const date = body.date || today();
+
+  const targetRows = sheetToObjects(getSheet("User_Targets"))
+    .filter(r =>
+      String(r.UserEmail).toLowerCase().trim() === userEmail &&
+      dateOnly(r.DateFrom) <= date
+    )
+    .sort((a, b) => (dateOnly(b.DateFrom) > dateOnly(a.DateFrom) ? 1 : -1));
+
+  const target = targetRows[0];
+
+  if (!target) {
+    return {
+      found: false,
+      date,
+      userEmail,
+      targets: {
+        calories: 0, protein: 0, fat: 0, carbs: 0, fiber: 0,
+        breakfastCal: 0, lunchCal: 0, dinnerCal: 0
+      }
+    };
+  }
+
+  return {
+    found: true,
+    date,
+    userEmail,
+    dateFrom: dateOnly(target.DateFrom),
+    targets: {
+      calories:     Number(target.Calories)     || 0,
+      protein:      Number(target.Protein)      || 0,
+      fat:          Number(target.Fat)          || 0,
+      carbs:        Number(target.Carbs)        || 0,
+      fiber:        Number(target.Fiber)        || 0,
+      breakfastCal: Number(target.BreakfastCal) || 0,
+      lunchCal:     Number(target.LunchCal)     || 0,
+      dinnerCal:    Number(target.DinnerCal)    || 0,
+    }
+  };
 }
 
 
