@@ -10,7 +10,7 @@
 //
 // ============================================================
 
-const SHEET_ID    = "1rcF5zDIohD2NSv7OrPCZNUsLcVqDFeJBDyqqEozgopY";
+const SHEET_ID    = "1PAZ8fyRX-0nw3pTsxcv9d99eki32K9Di_1Jg9g8EDj4";
 const TIMEZONE    = "Europe/Rome";
 const CLAUDE_MODEL = "claude-sonnet-4-20250514";
 
