@@ -244,6 +244,83 @@ body {
 #btn-photo:hover { color: var(--accent); }
 #btn-photo.has-photo { color: var(--accent); }
 
+/* photo chip (preview before send) */
+#photo-chip {
+  display: none;
+  align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 4px 8px 4px 4px;
+  margin-bottom: 8px;
+  max-width: fit-content;
+  font-size: 12px; color: var(--text-mid);
+}
+#photo-chip.show { display: inline-flex; }
+#photo-chip-thumb {
+  width: 40px; height: 40px;
+  border-radius: 8px; object-fit: cover;
+  flex-shrink: 0; background: var(--bg-deep);
+}
+#photo-chip-name {
+  max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#photo-chip-remove {
+  width: 22px; height: 22px; border: none; border-radius: 50%;
+  background: var(--bg-deep); color: var(--text-mid);
+  cursor: pointer; font-size: 13px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-family: inherit;
+}
+#photo-chip-remove:hover { background: var(--border); color: var(--text); }
+
+/* pending-action inline buttons (S1-4) */
+.pending-action-row {
+  display: flex; gap: 8px;
+  padding: 0 12px 8px 56px;
+  animation: fadeUp 0.2s ease;
+}
+.pending-action-btn {
+  flex: 0 1 auto;
+  padding: 8px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  font-size: 13px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.pending-action-btn.confirm {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.pending-action-btn.confirm:hover { opacity: 0.9; }
+.pending-action-btn.cancel {
+  background: var(--surface); color: var(--text-mid);
+}
+.pending-action-btn.cancel:hover { background: var(--bg-deep); }
+
+/* template "Log this" button (S1-3) */
+.template-log-btn {
+  margin-top: 8px; width: 100%;
+  padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent-light); color: var(--accent-text);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  font-family: inherit;
+}
+.template-log-btn:hover { background: var(--accent); color: #fff; }
+
+/* settings: read-only current targets summary (S1-5) */
+.targets-summary {
+  background: var(--bg-deep);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  font-size: 12px; color: var(--text);
+  line-height: 1.55;
+}
+.targets-summary-empty { color: var(--text-mid); font-style: italic; }
+.targets-summary-line { display: block; }
+
 /* error banner */
 #error-banner {
   display: none;
@@ -553,7 +630,7 @@ body {
   </div>
 
   <div id="quick-actions">
-    <button class="qa-btn" onclick="quickAction('photo')">📷 Photo</button>
+    <button class="qa-btn" onclick="quickAction('yesterday')">📅 Yesterday</button>
     <button class="qa-btn" onclick="quickAction('templates')">☰ Templates</button>
     <button class="qa-btn" onclick="quickAction('stats')">📊 Today's Stats</button>
   </div>
@@ -562,6 +639,11 @@ body {
     <div id="error-banner">
       <span id="error-banner-text"></span>
       <button id="error-banner-retry" onclick="retryBannerAction()">Retry</button>
+    </div>
+    <div id="photo-chip">
+      <img id="photo-chip-thumb" alt=""/>
+      <span id="photo-chip-name"></span>
+      <button id="photo-chip-remove" onclick="clearPendingPhoto()" title="Remove photo">✕</button>
     </div>
     <div class="input-wrap">
       <button id="btn-photo" onclick="triggerPhotoUpload()" title="Add photo">
@@ -609,6 +691,7 @@ body {
     <!-- Daily Targets -->
     <div class="settings-card">
       <div class="settings-card-title">Daily Targets</div>
+      <div id="targets-summary" class="targets-summary"></div>
       <div class="settings-field">
         <label class="settings-label">Calories</label>
         <div class="settings-input-wrap"><input id="st-calories" type="number" min="0"/><span class="settings-unit">kcal</span></div>
@@ -716,7 +799,7 @@ async function apiFetch(action, body = {}, signal = undefined) {
   if (action === 'exportData'     && window.__mockExportData != null) return window.__mockExportData;
   const fetchOpts = {
     method: "POST",
-    body: JSON.stringify({ ...body, action, userEmail: getSession()?.email, date: localDateString() })
+    body: JSON.stringify({ ...body, action, userEmail: getSession()?.email, date: body.date || localDateString() })
   };
   if (signal) fetchOpts.signal = signal;
   const res = await fetch(API_URL, fetchOpts);
@@ -917,13 +1000,54 @@ function renderTemplatesCard(templates) {
   const cards = templates.map(t => {
     const type  = (t.mealType || '').toLowerCase();
     const emoji = mealEmoji[type] || '🍽️';
+    const payload = encodeURIComponent(JSON.stringify({
+      templateName: t.templateName || '',
+      mealType:     t.mealType     || '',
+      ingredients:  t.ingredients  || '',
+      calories:     +(t.calories   || 0),
+      protein:      +(t.protein    || 0),
+      fat:          +(t.fat        || 0),
+      carbs:        +(t.carbs      || 0),
+    }));
     return `<div class="template-card">
 <div class="template-card-header"><span class="template-card-name">${escapeHtml(t.templateName || '')}</span><span class="template-card-type">${emoji} ${type || 'any'}</span></div>
 <div class="template-card-ingredients">${escapeHtml(t.ingredients || '')}</div>
 <div class="template-card-macros"><span class="template-macro">${t.calories || 0} kcal</span><span class="template-macro">P: ${t.protein || 0}g</span><span class="template-macro">F: ${t.fat || 0}g</span><span class="template-macro">C: ${t.carbs || 0}g</span></div>
+<button class="template-log-btn" data-payload="${payload}" onclick="logTemplateFromCard(this)">➕ Log this</button>
 </div>`;
   }).join('');
   return `<div class="templates-list"><div class="templates-list-title">📋 Your Templates (${templates.length})</div>${cards}</div>`;
+}
+
+// S1-3: handler for "➕ Log this" buttons inside a template card
+function logTemplateFromCard(btn) {
+  let data;
+  try { data = JSON.parse(decodeURIComponent(btn.dataset.payload || '')); }
+  catch { return; }
+  if (!data || !data.templateName) return;
+
+  const payload = {
+    mealType:    (data.mealType || '').toLowerCase() || 'snack',
+    name:        data.templateName,
+    ingredients: data.ingredients || '',
+    calories:    +data.calories || 0,
+    protein:     +data.protein  || 0,
+    fat:         +data.fat      || 0,
+    carbs:       +data.carbs    || 0,
+    notes:       `from template: ${data.templateName}`,
+  };
+
+  pendingAction = { action: 'logMeal', payload };
+
+  const promptMsg = {
+    role: 'ai',
+    content: `Log "${data.templateName}" (${payload.calories} kcal) as ${payload.mealType}?`,
+    time: nowTime(),
+  };
+  chatMsgs.push(promptMsg);
+  saveHistory();
+  pushMsg(promptMsg);
+  showPendingActionButtons();
 }
 
 function containsHtml(text) {
@@ -1169,11 +1293,37 @@ function handlePhotoSelected(input) {
   const file   = input.files[0];
   const reader = new FileReader();
   reader.onload = e => {
-    pendingPhoto = { data: e.target.result.split(',')[1], media_type: file.type || 'image/jpeg' };
+    const dataUrl = e.target.result;
+    pendingPhoto = { data: dataUrl.split(',')[1], media_type: file.type || 'image/jpeg' };
     document.getElementById('btn-photo').classList.add('has-photo');
+    showPhotoChip(dataUrl, file.name || 'photo');
   };
   reader.readAsDataURL(file);
   input.value = '';
+}
+
+function showPhotoChip(dataUrl, filename) {
+  const chip = document.getElementById('photo-chip');
+  if (!chip) return;
+  document.getElementById('photo-chip-thumb').src = dataUrl;
+  document.getElementById('photo-chip-name').textContent = filename;
+  chip.classList.add('show');
+}
+
+function hidePhotoChip() {
+  const chip = document.getElementById('photo-chip');
+  if (!chip) return;
+  chip.classList.remove('show');
+  const thumb = document.getElementById('photo-chip-thumb');
+  if (thumb) thumb.src = '';
+  const name = document.getElementById('photo-chip-name');
+  if (name) name.textContent = '';
+}
+
+function clearPendingPhoto() {
+  pendingPhoto = null;
+  document.getElementById('btn-photo').classList.remove('has-photo');
+  hidePhotoChip();
 }
 
 // ── Screen management ─────────────────────────────────────────────────────────────
@@ -1349,14 +1499,22 @@ function onInputChange() {
 
 async function sendMsg() {
   const input = document.getElementById('msg-input');
-  const text  = input.value.trim();
+  let   text  = input.value.trim();
+  // S1-1: photo-only send → fall back to a default analysis prompt
+  if (!text && pendingPhoto) {
+    text = 'Please analyse this photo and estimate calories + macros.';
+  }
   if (!text) return;
+
+  // S1-4: clear inline confirm/cancel buttons on any new send
+  clearPendingActionButtons();
 
   hideBanner();
   const time = nowTime();
 
   // ── Pending action intercept ──────────────────────────────────────────────────
   if (pendingAction) {
+    clearPendingActionButtons();
     if (isAffirmative(text)) {
       const { action, payload } = pendingAction;
       pendingAction = null;
@@ -1489,6 +1647,7 @@ async function sendMsg() {
     photoIncludedInMessage = true;
     pendingPhoto = null;
     document.getElementById('btn-photo').classList.remove('has-photo');
+    hidePhotoChip();
   }
 
   // ── Normal chat flow ──────────────────────────────────────────────────────────
@@ -1537,6 +1696,9 @@ async function sendMsg() {
       showPhotoEditCard(pendingAction.payload);
     }
 
+    // S1-4: inline Confirm/Cancel buttons whenever Claude proposed an action
+    if (pendingAction) showPendingActionButtons();
+
     input.value = '';
     onInputChange();
 
@@ -1548,6 +1710,45 @@ async function sendMsg() {
     input.disabled = false;
     input.focus();
   }
+}
+
+// ── Pending-action inline buttons (S1-4) ────────────────────────────────────────
+function showPendingActionButtons() {
+  if (!pendingAction) return;
+  clearPendingActionButtons();
+  const box    = document.getElementById('messages');
+  const typing = document.getElementById('typing');
+  if (!box || !typing) return;
+  const row = document.createElement('div');
+  row.className = 'pending-action-row';
+  row.id        = 'pending-action-row';
+  row.innerHTML = `
+    <button class="pending-action-btn confirm" id="pending-confirm-btn" onclick="confirmPendingAction()">✓ Confirm</button>
+    <button class="pending-action-btn cancel"  id="pending-cancel-btn"  onclick="cancelPendingAction()">✕ Cancel</button>`;
+  box.insertBefore(row, typing);
+  scrollBottom();
+}
+
+function clearPendingActionButtons() {
+  const row = document.getElementById('pending-action-row');
+  if (row) row.remove();
+}
+
+async function confirmPendingAction() {
+  if (!pendingAction) { clearPendingActionButtons(); return; }
+  const { action, payload } = pendingAction;
+  pendingAction = null;
+  clearPendingActionButtons();
+  await executeAction(action, payload);
+}
+
+function cancelPendingAction() {
+  pendingAction = null;
+  clearPendingActionButtons();
+  const aiMsg = { role: 'ai', content: 'Cancelled.', time: nowTime() };
+  chatMsgs.push(aiMsg);
+  saveHistory();
+  pushMsg(aiMsg);
 }
 
 // ── Confirm dialog ───────────────────────────────────────────────────────────────
@@ -1580,6 +1781,7 @@ function clearChat() {
     () => {
       chatMsgs      = [];
       pendingAction = null;
+      clearPendingActionButtons();
       localStorage.removeItem(HISTORY_KEY);
       renderAll();
     }
@@ -1666,9 +1868,14 @@ window.__apiCallLog         = [];
 window.__clearApiLog        = ()            => { window.__apiCallLog = []; };
 window.__setPendingAction   = (action, payload) => { pendingAction = { action, payload }; };
 Object.defineProperty(window, '__pendingAction', { get: () => pendingAction });
-window.__setPendingPhoto    = (data, mediaType) => {
-  pendingPhoto = { data: data || 'dGVzdA==', media_type: mediaType || 'image/jpeg' };
+window.__setPendingPhoto    = (data, mediaType, filename) => {
+  const mt   = mediaType || 'image/jpeg';
+  const data64 = data || 'dGVzdA==';
+  pendingPhoto = { data: data64, media_type: mt };
   document.getElementById('btn-photo').classList.add('has-photo');
+  // Populate the chip too so UI matches real upload flow
+  const dataUrl = `data:${mt};base64,${data64}`;
+  showPhotoChip(dataUrl, filename || 'photo.jpg');
 };
 window.__showPhotoEditCard  = (payload) => showPhotoEditCard(payload);
 window.__sendSuggestion     = (text)    => sendSuggestion(text);
@@ -1681,6 +1888,34 @@ window.__renderTemplatesCard = (t)      => renderTemplatesCard(t);
 window.__isTemplatesQuery   = (t)       => isTemplatesQuery(t);
 
 // ── Settings screen ──────────────────────────────────────────────────────────────
+function renderTargetsSummary(t) {
+  const el = document.getElementById('targets-summary');
+  if (!el) return;
+  t = t || {};
+  const hasAny = t.calories || t.protein || t.fat || t.carbs || t.fiber ||
+                 t.breakfastCal || t.lunchCal || t.dinnerCal;
+  if (!hasAny) {
+    el.innerHTML = `<span class="targets-summary-empty">No targets configured yet — set them below.</span>`;
+    return;
+  }
+  const macroParts = [];
+  if (t.protein) macroParts.push(`P ${t.protein}g`);
+  if (t.fat)     macroParts.push(`F ${t.fat}g`);
+  if (t.carbs)   macroParts.push(`C ${t.carbs}g`);
+  if (t.fiber)   macroParts.push(`Fiber ${t.fiber}g`);
+  const macroStr = macroParts.length ? ' · ' + macroParts.join(' · ') : '';
+  const line1 = `🎯 Current: ${t.calories || '—'} kcal${macroStr}`;
+
+  const mealParts = [];
+  if (t.breakfastCal) mealParts.push(`B ${t.breakfastCal}`);
+  if (t.lunchCal)     mealParts.push(`L ${t.lunchCal}`);
+  if (t.dinnerCal)    mealParts.push(`D ${t.dinnerCal}`);
+  const line2 = mealParts.length ? `🍽 Per meal: ${mealParts.join(' · ')} kcal` : '';
+
+  el.innerHTML = `<span class="targets-summary-line">${escapeHtml(line1)}</span>` +
+                 (line2 ? `<span class="targets-summary-line">${escapeHtml(line2)}</span>` : '');
+}
+
 async function openSettings() {
   const s = getSession();
   // Populate account info
@@ -1690,19 +1925,21 @@ async function openSettings() {
   document.getElementById('settings-account-email').textContent = s?.email || '—';
 
   // Load current targets
+  let targets = {};
   try {
     const raw   = await apiFetch('getStats');
     const stats = (!raw.error) ? normalizeStats(raw) : {};
-    const t = stats.targets || {};
-    document.getElementById('st-calories').value  = t.calories     || '';
-    document.getElementById('st-protein').value   = t.protein      || '';
-    document.getElementById('st-carbs').value      = t.carbs        || '';
-    document.getElementById('st-fat').value        = t.fat          || '';
-    document.getElementById('st-fiber').value      = t.fiber        || '';
-    document.getElementById('st-breakfast').value  = t.breakfastCal || '';
-    document.getElementById('st-lunch').value      = t.lunchCal     || '';
-    document.getElementById('st-dinner').value     = t.dinnerCal    || '';
+    targets = stats.targets || {};
+    document.getElementById('st-calories').value  = targets.calories     || '';
+    document.getElementById('st-protein').value   = targets.protein      || '';
+    document.getElementById('st-carbs').value      = targets.carbs        || '';
+    document.getElementById('st-fat').value        = targets.fat          || '';
+    document.getElementById('st-fiber').value      = targets.fiber        || '';
+    document.getElementById('st-breakfast').value  = targets.breakfastCal || '';
+    document.getElementById('st-lunch').value      = targets.lunchCal     || '';
+    document.getElementById('st-dinner').value     = targets.dinnerCal    || '';
   } catch {}
+  renderTargetsSummary(targets);
 
   showScreen('settings-screen');
 }
@@ -1736,6 +1973,8 @@ async function saveTargetsForm() {
     if (result.ok || result.success) {
       btn.classList.add('saved');
       btn.textContent = '✓ Saved!';
+      // S1-5: refresh read-only summary with the values we just saved
+      renderTargetsSummary(payload);
       setTimeout(() => {
         btn.classList.remove('saved');
         btn.textContent = 'Save Targets';
@@ -1784,6 +2023,38 @@ function quickAction(id) {
     sendSuggestion('Show my templates');
   } else if (id === 'stats') {
     sendSuggestion("Show today's stats");
+  } else if (id === 'yesterday') {
+    showYesterdayStats();
+  }
+}
+
+function yesterdayDateString() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+async function showYesterdayStats() {
+  const date = yesterdayDateString();
+  const userMsg = { role: 'user', content: "Show yesterday's stats", time: nowTime() };
+  chatMsgs.push(userMsg);
+  saveHistory();
+  document.getElementById('chat-empty').style.display = 'none';
+  pushMsg(userMsg);
+
+  setTyping(true);
+  try {
+    const raw = await apiFetch('getStats', { date });
+    setTyping(false);
+    if (raw.error) throw new Error(raw.error);
+    const stats   = normalizeStats(raw);
+    const statsMsg = { role: 'ai', content: renderStatsCard(stats), html: true, time: nowTime() };
+    chatMsgs.push(statsMsg);
+    saveHistory();
+    pushMsg(statsMsg);
+  } catch {
+    setTyping(false);
+    showBanner('AI is unreachable — please try again', () => showYesterdayStats());
   }
 }
 
